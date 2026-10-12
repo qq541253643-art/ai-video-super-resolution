@@ -1,0 +1,82 @@
+{
+  "version": "0.1.0",
+  "runtime_version": "1",
+  "files": [
+    {
+      "path": "VERSION",
+      "sha256": "E9DD8507F4BF0C6F42458E41AEA833AD0BD3F6127272335EEE9BF4D58541ED67"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "AC97C50F72F9F534BE717DFA43C7ED866327E628D9F39AF38026FE51F0129BD1"
+    },
+    {
+      "path": "README.md",
+      "sha256": "EA6FB01580AC59DAF171022D6A910D3185780BB970F5C527F767C7D3779D715C"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "9BB466F4BB3C6016D103569BAFC3B7B07589D41CEC33C602B606AFC56CF03832"
+    },
+    {
+      "path": "install.ps1",
+      "sha256": "B6C1814F5FE17361E048347867D0AC6EEA0E1682A42FD5259694B9BF270C7E1D"
+    },
+    {
+      "path": "setup-windows.ps1",
+      "sha256": "4C960E36DFB9A9237529AA84BBFB39AE2DB9315897932814978411C423C3C7B1"
+    },
+    {
+      "path": "start-windows.ps1",
+      "sha256": "7DBDE8530B60267FDFDDEF3CE95A84B2569E4FF697053A443CB032200F8AC6C6"
+    },
+    {
+      "path": "test-5s.ps1",
+      "sha256": "0021AED5094C77D8481A8391C0E79A5CB41C960E2F0D99607BF0FDDF4E198E2D"
+    },
+    {
+      "path": "打开AI视频高清修复.cmd",
+      "sha256": "FE24A9DD41AECA7F9B10EF7E9EA52A0054904DE7A9CB42D4B5C4C4EDC079412C"
+    },
+    {
+      "path": "ai_video_restore/__init__.py",
+      "sha256": "97D1989F1B87A2B04801EB589F8CB460D3B45E582116DAF5A12CFBBCEF3D5EF4"
+    },
+    {
+      "path": "ai_video_restore/__main__.py",
+      "sha256": "5405BFF9E552E0F24EE845B6A3328055F0486A23EE0AF837D8FAA05C0F221A44"
+    },
+    {
+      "path": "ai_video_restore/cli.py",
+      "sha256": "A7E8E3C91F845080777295FA2605299C7085863589CFF0557BCD6ADB7B359981"
+    },
+    {
+      "path": "ai_video_restore/engine.py",
+      "sha256": "AFDD8A22841F9E18B9939B04FDB242F18E850CB023677CDB3EC9D5FA59E67AFE"
+    },
+    {
+      "path": "ai_video_restore/media.py",
+      "sha256": "BDFD068AACD0C9B0E9CCAA872FECD7477E40036179867BE3121FDB63074C9583"
+    },
+    {
+      "path": "ai_video_restore/server.py",
+      "sha256": "6B6ED294076572A2618CE680AD4046EDE2CD861996C9C7CCE0D03A01FCEDDF6A"
+    },
+    {
+      "path": "ai_video_restore/telemetry.py",
+      "sha256": "B424989AF1EC49D91B8FB704EE190E4C7E69354B203626935EDD5E71DBDB6497"
+    },
+    {
+      "path": "ai_video_restore/static/index.html",
+      "sha256": "26A6349EA2D44F08833EACD28E1DB7C8C36EE2EE1AB834A3BCE0B72DCB6FFA7E"
+    },
+    {
+      "path": "ai_video_restore/static/styles.css",
+      "sha256": "363272AD12F5F8303675C3CDC1D86A2E8187FAAE660C8434E8DFB2769C875F0A"
+    },
+    {
+      "path": "ai_video_restore/static/app.js",
+      "sha256": "4B368406ED834694856FB61E13040A3C9DA88B1236976FDF2CC70C6F62308842"
+    }
+  ]
+}

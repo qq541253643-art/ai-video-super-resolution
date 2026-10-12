@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI 视频高清修复</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M4.5 8.5h8l2.4 3H27.5v13H4.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          <path d="M10 17.5h12M16 14v7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        <span>AI 视频高清修复</span>
+        <span class="version" id="version">v—</span>
+      </div>
+      <div class="device-state" id="deviceState" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="deviceLabel">正在检测本机环境</span>
+      </div>
+      <div class="privacy-note">视频只在本机处理，不上传云端</div>
+    </header>
+
+    <main class="workspace">
+      <aside class="queue-panel" aria-labelledby="queueTitle">
+        <div class="panel-heading">
+          <div>
+            <h1 id="queueTitle">处理队列</h1>
+            <p id="queueCount">尚未导入视频</p>
+          </div>
+          <button class="icon-button" id="clearButton" type="button" aria-label="清空尚未提交的视频" title="清空待提交视频">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"/></svg>
+          </button>
+        </div>
+        <div class="queue-list" id="queueList">
+          <div class="empty-queue">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 12h13l4 5h15v22H8zM16 28h16M24 22v12"/></svg>
+            <strong>队列还是空的</strong>
+            <span>一次可选择多个视频</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="main-stage" aria-labelledby="stageTitle">
+        <div class="intro" id="introPanel">
+          <div class="model-chip" id="modelChip"><span></span><b id="modelChipText">正在检测 Real-ESRGAN</b></div>
+          <h2 id="stageTitle">把模糊视频，交给本机显卡。</h2>
+          <p>自动识别分辨率、帧率、时长与音频。完整保留主体比例，统一输出 1080×1920。</p>
+          <button class="import-button" id="pickButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h7l2 3h9v10H3zM12 12v5m-2-3 2-2 2 2"/></svg>
+            批量选择视频
+          </button>
+          <p class="import-note">支持 MP4、MOV、MKV、AVI、M4V、WebM · 输出自动保存在原文件夹</p>
+        </div>
+
+        <div class="active-run" id="activeRun" hidden>
+          <div class="run-head">
+            <div>
+              <span class="running-label">正在处理</span>
+              <h2 id="activeName">—</h2>
+            </div>
+            <strong id="activePercent">0%</strong>
+          </div>
+          <div class="progress-track" id="progressTrack" role="progressbar" aria-label="当前视频处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progressBar"></span></div>
+          <div class="run-details">
+            <div><span>当前步骤</span><strong id="activeStage">准备中</strong></div>
+            <div><span>推理速度</span><strong id="activeFps">计算中</strong></div>
+            <div><span>预计完成</span><strong id="activeEta">计算中</strong></div>
+          </div>
+          <p class="run-tip">处理中可以继续添加视频，它们会自动排入队列。</p>
+        </div>
+
+        <div class="completed-summary" id="completedSummary" hidden>
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 17l6 6L26 9"/></svg>
+          <div><strong>本批次已完成</strong><span id="completedText">输出已保存到原视频文件夹</span></div>
+        </div>
+      </section>
+
+      <aside class="settings-panel" aria-labelledby="settingsTitle">
+        <div class="settings-scroll">
+          <div class="panel-heading settings-heading">
+            <div><h2 id="settingsTitle">增强设置</h2><p>为 RTX 2060S 8GB 优化</p></div>
+          </div>
+
+          <fieldset class="setting-group">
+            <legend>输出版本</legend>
+            <div class="version-option always-on">
+              <div><strong>自然增强</strong><span>Real-ESRGAN · AI 保真融合</span></div><span class="fixed-tag">固定</span>
+            </div>
+            <div class="version-option always-on">
+              <div><strong>高清增强</strong><span>Real-ESRGAN · 纹理更清晰</span></div><span class="fixed-tag">固定</span>
+            </div>
+            <label class="version-option toggle-option" for="faceToggle">
+              <div><strong>人脸增强</strong><span>CodeFormer · 默认关闭</span></div>
+              <input id="faceToggle" type="checkbox" disabled>
+              <span class="toggle" aria-hidden="true"></span>
+            </label>
+            <p class="warning-note">人脸增强可能改变微小身份特征，仅在脸部明显模糊时开启。</p>
+          </fieldset>
+
+          <fieldset class="setting-group">
+            <legend>显存设置</legend>
+            <label class="field-label" for="tileSelect">Tile 分块</label>
+            <select id="tileSelect">
+              <option value="128">128 · 最省显存</option>
+              <option value="256" selected>256 · 8GB 推荐</option>
+              <option value="384">384 · 更快</option>
+              <option value="512">512 · 高显存占用</option>
+            </select>
+            <p class="field-help">若出现显存不足，改成 128 后重试。</p>
+          </fieldset>
+
+          <fieldset class="setting-group output-rule">
+            <legend>保存规则</legend>
+            <div class="rule-line"><span>目录</span><strong>原视频文件夹</strong></div>
+            <div class="rule-line"><span>高清版</span><code>高清+原名.mp4</code></div>
+            <div class="rule-line"><span>画面</span><strong>1080 × 1920</strong></div>
+            <div class="rule-line"><span>编码</span><strong>H.264 + AAC</strong></div>
+          </fieldset>
+
+          <div class="environment" id="environment">
+            <div><span>GPU</span><strong id="gpuName">检测中</strong></div>
+            <div><span>Real-ESRGAN</span><strong id="realesrganState">检测中</strong></div>
+            <div><span>CodeFormer</span><strong id="codeformerState">检测中</strong></div>
+          </div>
+        </div>
+
+        <div class="action-area">
+          <div class="batch-eta"><span>本批预计完成</span><strong id="batchEta">等待导入</strong></div>
+          <button class="start-button" id="startButton" type="button" disabled>开始高清修复</button>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="footerStatus">准备就绪</span>
+      <button id="openFolderButton" type="button" hidden>打开输出文件夹</button>
+    </footer>
+  </div>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

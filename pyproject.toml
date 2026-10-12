@@ -1,0 +1,10 @@
+[project]
+name = "ai-video-restorer"
+version = "0.1.0"
+description = "Local Real-ESRGAN video restoration workstation for Windows"
+requires-python = ">=3.11,<3.13"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

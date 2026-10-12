@@ -2,7 +2,7 @@
 
 Windows 本机批量视频 AI 超分工具。浏览器只负责操作，Real-ESRGAN、CodeFormer 和 FFmpeg 全部在当前电脑运行，素材不会上传云端。
 
-当前版本：**v0.1.0**
+当前版本：**v0.1.1**
 
 ## 能做什么
 
@@ -39,6 +39,8 @@ irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/
 5. 在桌面创建“AI 视频高清修复”快捷方式。
 
 首次安装需下载数 GB 的 PyTorch 与模型文件，耗时取决于网络。以后双击桌面快捷方式会先检查仓库更新；断网或检查失败时继续使用本地版本。
+
+v0.1.1 修复了 Windows PowerShell 5.1 执行一键安装时的 `InvalidLeftHandSide` 报错。入口脚本为无 BOM 的 ASCII 文本，中文安装器下载到本地后通过 `-File` 执行；执行策略仅在安装进程内使用 Bypass，不修改系统设置。
 
 ## 手动启动
 

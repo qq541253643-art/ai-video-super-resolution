@@ -12,6 +12,7 @@ FILES = [
     "README.md",
     "pyproject.toml",
     "install.ps1",
+    "install-windows.ps1",
     "setup-windows.ps1",
     "start-windows.ps1",
     "test-5s.ps1",

@@ -2,7 +2,7 @@
 
 Windows 本机批量视频 AI 超分工具。浏览器只负责操作，Real-ESRGAN、CodeFormer 和 FFmpeg 全部在当前电脑运行，素材不会上传云端。
 
-当前版本：**v0.1.2**
+当前版本：**v0.1.3**
 
 ## 能做什么
 
@@ -45,6 +45,14 @@ v0.1.1 修复了 Windows PowerShell 5.1 执行一键安装时的 `InvalidLeftHan
 v0.1.2 支持没有 `uv`、`winget` 和 FFmpeg 的电脑：直接下载 [uv 发布包](https://github.com/astral-sh/uv/releases/tag/0.13.0) 与 [Gyan FFmpeg 发布包](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)，校验 SHA-256 后部署。每次启动自动加载本地依赖路径，不修改系统 PATH；失败后可直接重跑安装命令。
 
 ## 手动启动
+
+如果已经安装成功但桌面没有快捷方式，在同一台电脑的 PowerShell 中执行：
+
+```powershell
+irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/main/repair-shortcut.ps1 | iex
+```
+
+修复入口只补建快捷方式，不重新下载模型。安装中途失败或仍在进行时会提示“安装尚未完成”；请先检查原安装窗口。快捷方式按 Windows 的实际桌面位置创建，支持重定向桌面。
 
 双击 `打开AI视频高清修复.cmd`，或运行：
 

@@ -48,14 +48,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'AI 环境部署失败。' }
 
   $shortcutPath = Join-Path $DesktopDir 'AI 视频高清修复.lnk'
-  $shell = New-Object -ComObject WScript.Shell
-  $shortcut = $shell.CreateShortcut($shortcutPath)
-  $shortcut.TargetPath = (Get-Command powershell.exe).Source
-  $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir 'start-windows.ps1') + '"'
-  $shortcut.WorkingDirectory = $InstallDir
-  $shortcut.IconLocation = "$env:SystemRoot\System32\shell32.dll,220"
-  $shortcut.Description = '启动 AI 视频高清修复并检查更新'
-  $shortcut.Save()
+  & (Join-Path $InstallDir 'repair-shortcut-windows.ps1') -InstallDir $InstallDir -DesktopDir $DesktopDir
 
   Write-Host "安装完成：$InstallDir" -ForegroundColor Green
   Write-Host "桌面快捷方式：$shortcutPath"

@@ -13,6 +13,8 @@ FILES = [
     "pyproject.toml",
     "install.ps1",
     "install-windows.ps1",
+    "repair-shortcut.ps1",
+    "repair-shortcut-windows.ps1",
     "setup-windows.ps1",
     "runtime-windows.ps1",
     "start-windows.ps1",

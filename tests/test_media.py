@@ -10,11 +10,11 @@ from ai_video_restore.media import MediaError, assert_safe_output, fitted_foregr
 class OutputPathTests(unittest.TestCase):
     def test_prefix_is_added_in_source_folder(self) -> None:
         source = Path(tempfile.gettempdir()) / "原视频.mp4"
-        self.assertEqual(prefixed_output(source, "高清"), source.with_name("高清+原视频.mp4"))
+        self.assertEqual(prefixed_output(source, "高清"), source.resolve().with_name("高清+原视频.mp4"))
 
     def test_comparison_uses_requested_suffix(self) -> None:
         source = Path(tempfile.gettempdir()) / "clip.mov"
-        self.assertEqual(prefixed_output(source, "对比", ".jpg"), source.with_name("对比+clip.jpg"))
+        self.assertEqual(prefixed_output(source, "对比", ".jpg"), source.resolve().with_name("对比+clip.jpg"))
 
     def test_source_cannot_be_overwritten(self) -> None:
         source = Path(tempfile.gettempdir()) / "clip.mp4"

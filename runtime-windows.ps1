@@ -1,4 +1,54 @@
 # Shared by setup, desktop launch and the five-second CLI test.
+function Get-VerifiedDownload([string]$Uri, [string]$Destination, [string]$Sha256 = '') {
+  New-Item -ItemType Directory -Path (Split-Path -Parent $Destination) -Force | Out-Null
+  if ((Test-Path -LiteralPath $Destination) -and $Sha256 -and
+      (Get-FileHash -Algorithm SHA256 -LiteralPath $Destination).Hash -eq $Sha256) { return }
+  $partial = "$Destination.download"
+  if ($Sha256 -and (Test-Path -LiteralPath $partial) -and
+      (Get-FileHash -Algorithm SHA256 -LiteralPath $partial).Hash -eq $Sha256) {
+    Move-Item -LiteralPath $partial -Destination $Destination -Force
+    return
+  }
+  $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      Write-Host "Download ($attempt/3): $Uri"
+      if ($curl) {
+        & $curl.Source --fail --location --connect-timeout 30 --speed-time 120 --speed-limit 1024 --continue-at - --output $partial $Uri
+        $downloadExit = $LASTEXITCODE
+        if ($downloadExit -ne 0) {
+          # A source that does not support ranges must restart, not append a full response.
+          if ($downloadExit -in @(33, 36) -and (Test-Path -LiteralPath $partial)) {
+            Remove-Item -LiteralPath $partial -Force
+          }
+          throw "curl exit $downloadExit"
+        }
+      } else {
+        # Older Windows without curl still gets retries, but cannot resume this request.
+        $savedProgress = $ProgressPreference
+        try {
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -UseBasicParsing -TimeoutSec 1800 -Uri $Uri -OutFile $partial
+        } finally { $ProgressPreference = $savedProgress }
+      }
+      if (-not (Test-Path -LiteralPath $partial) -or (Get-Item -LiteralPath $partial).Length -eq 0) {
+        throw 'Downloaded file is empty.'
+      }
+      if ($Sha256 -and (Get-FileHash -Algorithm SHA256 -LiteralPath $partial).Hash -ne $Sha256) {
+        Remove-Item -LiteralPath $partial -Force
+        throw 'SHA-256 mismatch; refusing to install this file.'
+      }
+      Move-Item -LiteralPath $partial -Destination $Destination -Force
+      return
+    } catch {
+      if ($attempt -eq 3) { throw "Download failed: $Uri. Cached progress: $partial. $($_.Exception.Message)" }
+      Write-Warning "Download interrupted; retrying with saved progress. $($_.Exception.Message)"
+      Start-Sleep -Seconds 2
+    }
+  }
+}
+
 function Add-RuntimePath([string]$RuntimeDir) {
   foreach ($folder in @((Join-Path $RuntimeDir 'uv'), (Join-Path $RuntimeDir 'ffmpeg\bin'))) {
     if ((Test-Path -LiteralPath $folder) -and ($env:Path -split ';') -notcontains $folder) {
@@ -14,11 +64,8 @@ function Install-PortableZip([string]$Uri, [string]$Destination, [string]$Sha256
   try {
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $zip = Join-Path $temporary 'download.zip'
-    Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Uri $Uri -OutFile $zip
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash -ne $Sha256) {
-      throw "Download checksum mismatch: $Uri. Run the installer again."
-    }
+    $zip = "$Destination.zip"
+    Get-VerifiedDownload $Uri $zip $Sha256
     $expanded = Join-Path $temporary 'expanded'
     Expand-Archive -LiteralPath $zip -DestinationPath $expanded
     $items = @(Get-ChildItem -LiteralPath $expanded)

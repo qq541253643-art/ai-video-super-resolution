@@ -2,7 +2,7 @@
 
 Windows 本机批量视频 AI 超分工具。浏览器只负责操作，Real-ESRGAN、CodeFormer 和 FFmpeg 全部在当前电脑运行，素材不会上传云端。
 
-当前版本：**v0.1.3**
+版本号以 [VERSION](VERSION) 和面板显示为准。
 
 ## 能做什么
 
@@ -39,6 +39,10 @@ irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/
 5. 在桌面创建“AI 视频高清修复”快捷方式。
 
 首次安装需下载数 GB 的 PyTorch 与模型文件，耗时取决于网络。以后双击桌面快捷方式会先检查仓库更新；断网或检查失败时继续使用本地版本。
+
+安装日志自动保存到桌面 `AI-install-日期-时间.txt`。依赖下载失败会重试三次；Windows 自带 curl 可用时，模型和工具下载支持断点续传，失败保留 `.download` 文件，重跑原命令即可继续。没有 curl 的旧系统使用兼容下载方式重试，不支持该次下载续传。PyTorch 等 Python 包由 uv 管理下载缓存并重试，不保证单个 wheel 的字节级续传。不要删除安装目录和缓存。
+
+CodeFormer 三个模型文件均校验固定 SHA-256。只有真实 Real-ESRGAN 推理、CodeFormer CUDA 推理与人脸检测/解析模型加载、H.264 编码和面板健康接口全部通过后，才写入完成标记并创建桌面快捷方式。小样本自检报告保存在 `.runtime/install-selftest.json`；它验证环境可运行，不替代真人视频画质测试。失败时发送桌面安装日志，无需开放远程访问。
 
 v0.1.1 修复了 Windows PowerShell 5.1 执行一键安装时的 `InvalidLeftHandSide` 报错。入口脚本为无 BOM 的 ASCII 文本，中文安装器下载到本地后通过 `-File` 执行；执行策略仅在安装进程内使用 Bypass，不修改系统设置。
 

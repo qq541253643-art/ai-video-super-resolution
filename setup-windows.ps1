@@ -22,8 +22,8 @@ function Download-Zip([string]$Uri, [string]$Destination) {
   $temporary = Join-Path ([IO.Path]::GetTempPath()) ('ai-video-' + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $temporary -Force | Out-Null
   try {
-    $zip = Join-Path $temporary 'download.zip'
-    Invoke-WebRequest -UseBasicParsing -TimeoutSec 120 -Headers @{ 'User-Agent' = 'AI-Video-Restorer-Setup' } -Uri $Uri -OutFile $zip
+    $zip = "$Destination.zip"
+    Get-VerifiedDownload $Uri $zip
     if ((Get-Item $zip).Length -eq 0) { throw "下载文件为空：$Uri" }
     $expanded = Join-Path $temporary 'expanded'
     Expand-Archive -LiteralPath $zip -DestinationPath $expanded -Force
@@ -38,18 +38,13 @@ function Download-Zip([string]$Uri, [string]$Destination) {
   }
 }
 
-function Download-File([string]$Uri, [string]$Destination) {
-  if (Test-Path -LiteralPath $Destination) { return }
-  $parent = Split-Path -Parent $Destination
-  New-Item -ItemType Directory -Path $parent -Force | Out-Null
-  $partial = "$Destination.download"
-  try {
-    Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Headers @{ 'User-Agent' = 'AI-Video-Restorer-Setup' } -Uri $Uri -OutFile $partial
-    if ((Get-Item $partial).Length -eq 0) { throw "下载文件为空：$Uri" }
-    Move-Item -LiteralPath $partial -Destination $Destination -Force
-  }
-  finally {
-    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+function Invoke-UvInstall([string[]]$Arguments) {
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    & uv @Arguments
+    if ($LASTEXITCODE -eq 0) { return }
+    if ($attempt -eq 3) { throw 'Python 依赖安装失败；下载缓存已保留，请重跑安装命令。' }
+    Write-Warning "依赖下载失败，保留 uv 缓存并重试（$attempt/3）"
+    Start-Sleep -Seconds 2
   }
 }
 
@@ -83,6 +78,8 @@ if ($BasicToolsOnly) {
   Write-Step '基础依赖与 Python 已就绪（仅依赖检测模式）'
   return
 }
+$runtimeMarker = Join-Path $runtimeDir 'runtime-version.txt'
+if (Test-Path -LiteralPath $runtimeMarker) { Remove-Item -LiteralPath $runtimeMarker -Force }
 
 if (-not (Test-Path -LiteralPath (Join-Path $ncnnDir 'realesrgan-ncnn-vulkan.exe'))) {
   Write-Step '部署 Real-ESRGAN NCNN Vulkan 模型'
@@ -98,10 +95,10 @@ if ($InstallCodeFormer) {
   }
 
   Write-Step '安装 CodeFormer GPU 依赖（首次下载较大）'
-  uv pip install --python $python torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-  if ($LASTEXITCODE -ne 0) { throw 'PyTorch CUDA 依赖安装失败。' }
-  uv pip install --python $python 'numpy<2' opencv-python pillow pyyaml requests scipy scikit-image tqdm addict future lmdb yapf lpips gdown filterpy numba
-  if ($LASTEXITCODE -ne 0) { throw 'CodeFormer Python 依赖安装失败。' }
+  # Fetch only CUDA wheels here. Resolve ordinary dependencies from PyPI below,
+  # rather than routing all small packages through the CUDA download server.
+  Invoke-UvInstall @('pip', 'install', '--python', $python, 'torch==2.7.1+cu128', 'torchvision==0.22.1+cu128', '--no-deps', '--index-url', 'https://download.pytorch.org/whl/cu128')
+  Invoke-UvInstall @('pip', 'install', '--python', $python, 'torch==2.7.1+cu128', 'torchvision==0.22.1+cu128', 'numpy<2', 'opencv-python', 'pillow', 'pyyaml', 'requests', 'scipy', 'scikit-image', 'tqdm', 'addict', 'future', 'lmdb', 'yapf', 'lpips', 'gdown', 'filterpy', 'numba', '--index-url', 'https://pypi.org/simple')
   & $python -c "import sys, torch; print('PyTorch CUDA:', torch.__version__, torch.cuda.is_available()); sys.exit(0 if torch.cuda.is_available() else 1)"
   if ($LASTEXITCODE -ne 0) { throw 'PyTorch 无法调用显卡，请更新 NVIDIA Studio Driver 后重试。' }
 
@@ -113,10 +110,19 @@ if ($InstallCodeFormer) {
   }
 
   Write-Step '下载 CodeFormer 与人脸检测模型'
-  Download-File 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth' (Join-Path $codeFormerDir 'weights\CodeFormer\codeformer.pth')
-  Download-File 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth' (Join-Path $codeFormerDir 'weights\facelib\detection_mobilenet0.25_Final.pth')
-  Download-File 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/parsing_parsenet.pth' (Join-Path $codeFormerDir 'weights\facelib\parsing_parsenet.pth')
+  Get-VerifiedDownload 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth' (Join-Path $codeFormerDir 'weights\CodeFormer\codeformer.pth') '1009E537E0C2A07D4CABCE6355F53CB66767CD4B4297EC7A4A64CA4B8A5684B7'
+  Get-VerifiedDownload 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth' (Join-Path $codeFormerDir 'weights\facelib\detection_mobilenet0.25_Final.pth') '2979B33FFAFDA5D74B6948CD7A5B9A7A62F62B949CEF24E95FD15D2883A65220'
+  Get-VerifiedDownload 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/parsing_parsenet.pth' (Join-Path $codeFormerDir 'weights\facelib\parsing_parsenet.pth') '3D558D8D0E42C20224F13CF5A29C79EBA2D59913419F945545D8CF7B72920DE2'
 }
+
+Write-Step '实际运行模型、编码与面板自检（通过后才创建快捷方式）'
+Push-Location $projectRoot
+try {
+  $checkArgs = @('-m', 'ai_video_restore.selftest')
+  if (-not $InstallCodeFormer) { $checkArgs += '--skip-face' }
+  & $python @checkArgs
+  if ($LASTEXITCODE -ne 0) { throw '安装自检未通过。请保留日志并重跑安装命令。' }
+} finally { Pop-Location }
 
 $manifest = Join-Path $projectRoot 'manifest.json'
 if (Test-Path -LiteralPath $manifest) {

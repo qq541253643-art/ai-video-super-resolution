@@ -16,7 +16,16 @@ try {
   $cacheBuster = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
   $uri = "https://raw.githubusercontent.com/$Repository/$encodedBranch/install-windows.ps1?t=$cacheBuster"
   Write-Host 'Downloading AI Video Restore installer...' -ForegroundColor Green
-  Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 -Uri $uri -OutFile $installer
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 -Uri $uri -OutFile $installer
+      break
+    } catch {
+      if ($attempt -eq 3) { throw }
+      Start-Sleep -Seconds 2
+    }
+  }
   $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $installerArguments = @(
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer,

@@ -1,5 +1,6 @@
 ﻿param(
-  [bool]$InstallCodeFormer = $true
+  [bool]$InstallCodeFormer = $true,
+  [switch]$BasicToolsOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,26 +12,10 @@ $ncnnDir = Join-Path $runtimeDir 'realesrgan'
 $codeFormerDir = Join-Path $depsDir 'CodeFormer'
 $codeFormerCommit = 'b33cc7d639d6545bfcccc7e0bc6ae51f24e79c2b'
 $ncnnUrl = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip'
+. (Join-Path $projectRoot 'runtime-windows.ps1')
 
 function Write-Step([string]$Message) {
   Write-Host "`n==> $Message" -ForegroundColor Green
-}
-
-function Refresh-Path {
-  $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-  $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $env:Path = "$machine;$user;$env:LOCALAPPDATA\Microsoft\WinGet\Links"
-}
-
-function Ensure-WingetPackage([string]$Command, [string]$PackageId) {
-  if (Get-Command $Command -ErrorAction SilentlyContinue) { return }
-  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw "系统缺少 $Command，也找不到 winget。请先安装 Windows 应用安装程序。"
-  }
-  Write-Step "安装 $PackageId"
-  winget install --id $PackageId --exact --accept-package-agreements --accept-source-agreements --silent
-  if ($LASTEXITCODE -ne 0) { throw "$PackageId 安装失败，退出码 $LASTEXITCODE" }
-  Refresh-Path
 }
 
 function Download-Zip([string]$Uri, [string]$Destination) {
@@ -74,17 +59,30 @@ if (-not (Test-Path -LiteralPath $smi)) { throw '未检测到 NVIDIA 驱动，�
 $gpu = & $smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits | Select-Object -First 1
 Write-Host "GPU: $gpu"
 
-Ensure-WingetPackage 'uv' 'astral-sh.uv'
-Ensure-WingetPackage 'ffmpeg' 'Gyan.FFmpeg'
+Write-Step '检测并安装 uv、FFmpeg（无需 winget）'
+Ensure-BasicTools $runtimeDir
 
 Write-Step '创建 Python 3.11 本机环境'
-uv python install 3.11
+$savedPythonMirror = $env:UV_PYTHON_INSTALL_MIRROR
+try {
+  # Use the same official GitHub release host as the other dependencies.
+  # Preserve an explicit mirror chosen by the user.
+  if (-not $env:UV_PYTHON_INSTALL_MIRROR) {
+    $env:UV_PYTHON_INSTALL_MIRROR = 'https://github.com/astral-sh/python-build-standalone/releases/download'
+  }
+  uv python install 3.11
+}
+finally { $env:UV_PYTHON_INSTALL_MIRROR = $savedPythonMirror }
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.11 下载失败。' }
 if (-not (Test-Path -LiteralPath (Join-Path $venvDir 'Scripts\python.exe'))) {
   uv venv $venvDir --python 3.11
   if ($LASTEXITCODE -ne 0) { throw 'Python 虚拟环境创建失败。' }
 }
 $python = Join-Path $venvDir 'Scripts\python.exe'
+if ($BasicToolsOnly) {
+  Write-Step '基础依赖与 Python 已就绪（仅依赖检测模式）'
+  return
+}
 
 if (-not (Test-Path -LiteralPath (Join-Path $ncnnDir 'realesrgan-ncnn-vulkan.exe'))) {
   Write-Step '部署 Real-ESRGAN NCNN Vulkan 模型'

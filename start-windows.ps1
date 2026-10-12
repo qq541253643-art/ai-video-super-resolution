@@ -89,6 +89,8 @@ if ($didUpdate) {
 
 $winGetLinks = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'
 if (Test-Path -LiteralPath $winGetLinks) { $env:Path = "$winGetLinks;$env:Path" }
+. (Join-Path $installDir 'runtime-windows.ps1')
+Add-RuntimePath (Join-Path $installDir '.runtime')
 $python = Join-Path $installDir '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $python)) { throw 'Python 环境不存在，请重新运行安装命令。' }
 

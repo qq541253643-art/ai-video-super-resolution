@@ -14,6 +14,7 @@ FILES = [
     "install.ps1",
     "install-windows.ps1",
     "setup-windows.ps1",
+    "runtime-windows.ps1",
     "start-windows.ps1",
     "test-5s.ps1",
     "打开AI视频高清修复.cmd",
@@ -37,7 +38,7 @@ def main() -> None:
         entries.append({"path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest().upper()})
     payload = {
         "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
-        "runtime_version": "1",
+        "runtime_version": "2",
         "files": entries,
     }
     (ROOT / "manifest.json").write_text(

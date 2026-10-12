@@ -2,7 +2,7 @@
 
 Windows 本机批量视频 AI 超分工具。浏览器只负责操作，Real-ESRGAN、CodeFormer 和 FFmpeg 全部在当前电脑运行，素材不会上传云端。
 
-当前版本：**v0.1.1**
+当前版本：**v0.1.2**
 
 ## 能做什么
 
@@ -33,7 +33,7 @@ irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/
 安装器会：
 
 1. 检测 NVIDIA 显卡；
-2. 安装缺失的 `uv` 和 FFmpeg；
+2. 自动下载缺失的 `uv`、FFmpeg 和 FFprobe 到工具的 `.runtime` 目录，无需 `winget` 或 Microsoft Store；
 3. 部署 Real-ESRGAN NCNN Vulkan、CodeFormer 与模型权重；
 4. 安装到“文档\AI Video Restore”（使用英文运行路径，兼容模型引擎）；
 5. 在桌面创建“AI 视频高清修复”快捷方式。
@@ -41,6 +41,8 @@ irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/
 首次安装需下载数 GB 的 PyTorch 与模型文件，耗时取决于网络。以后双击桌面快捷方式会先检查仓库更新；断网或检查失败时继续使用本地版本。
 
 v0.1.1 修复了 Windows PowerShell 5.1 执行一键安装时的 `InvalidLeftHandSide` 报错。入口脚本为无 BOM 的 ASCII 文本，中文安装器下载到本地后通过 `-File` 执行；执行策略仅在安装进程内使用 Bypass，不修改系统设置。
+
+v0.1.2 支持没有 `uv`、`winget` 和 FFmpeg 的电脑：直接下载 [uv 发布包](https://github.com/astral-sh/uv/releases/tag/0.13.0) 与 [Gyan FFmpeg 发布包](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2)，校验 SHA-256 后部署。每次启动自动加载本地依赖路径，不修改系统 PATH；失败后可直接重跑安装命令。
 
 ## 手动启动
 

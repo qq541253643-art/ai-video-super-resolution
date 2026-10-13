@@ -1,10 +1,10 @@
 {
-  "version": "0.1.5",
+  "version": "0.1.6",
   "runtime_version": "4",
   "files": [
     {
       "path": "VERSION",
-      "sha256": "800CF1C0392B24DE7C0A1C6EA6778ECB433DEC71C49A150BCE96A98477527B2F"
+      "sha256": "1F2110568627307BECAE713F8B808F3D9D912D4B2A24ED6A78605F03F7437D3C"
     },
     {
       "path": "LICENSE",
@@ -12,11 +12,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "C9CAD31E769F979A266C69AF76DE20AFF34925EA9B3CB1E1B963320F4CD2A5D6"
+      "sha256": "89221442FD0753356B3AC7C69CB99ADE368E8A4D6B608D7DA5BFE9728BE7CB81"
     },
     {
       "path": "pyproject.toml",
-      "sha256": "4B907C376F68AE67B3D117E3258BE5205C99A1A87C635F6F56E7289322377747"
+      "sha256": "CE5A0667EE8E20A1AE2E5ED3A5D3411ECE63D27A215EB3D2CECC5FF9D00A6C3B"
     },
     {
       "path": "install.ps1",
@@ -24,7 +24,7 @@
     },
     {
       "path": "install-windows.ps1",
-      "sha256": "FD5495EE88B243DBF8C051DE8C6624469D267F5610D8A147F119930E6346CE36"
+      "sha256": "397398DFEB6138DDAFFE990C204FB66BA7080225BF1B4A9C4B253A1D3066C622"
     },
     {
       "path": "repair-shortcut.ps1",
@@ -32,7 +32,11 @@
     },
     {
       "path": "repair-shortcut-windows.ps1",
-      "sha256": "8D8A90A2E9C420B76A38619B39726605E428642D691D372A146B4D297E669C85"
+      "sha256": "C8132E9D4546484FDD030229F6A6F4AADE6E7E0954BF6A741B92E96664E2E5DA"
+    },
+    {
+      "path": "pick-videos-windows.ps1",
+      "sha256": "039765656DF59773ED54B704158C3055B7971D41D18D8DFF02EA5E3F701EA1A0"
     },
     {
       "path": "setup-windows.ps1",
@@ -76,7 +80,7 @@
     },
     {
       "path": "ai_video_restore/server.py",
-      "sha256": "AFF9762D90CCDFC492B0E6EAB2CB77AC94E70F7519BB0E39B1CE61F59A599249"
+      "sha256": "47392CA016675BD7010CC6CF12F06101446A8993F350BF9C839604B344A7A640"
     },
     {
       "path": "ai_video_restore/telemetry.py",

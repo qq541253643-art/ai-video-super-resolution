@@ -11,6 +11,7 @@ $ErrorActionPreference = 'Stop'
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ('ai-video-install-' + [Guid]::NewGuid().ToString('N'))
 $cacheBuster = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $logStarted = $false
+$environmentReady = $false
 $logPath = Join-Path $DesktopDir ('AI-install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.txt')
 
 function Test-RelativePath([string]$Relative) {
@@ -60,16 +61,21 @@ try {
 
   & (Join-Path $InstallDir 'setup-windows.ps1')
   if ($LASTEXITCODE -ne 0) { throw 'AI 环境部署失败。' }
+  $environmentReady = $true
 
-  $shortcutPath = Join-Path $DesktopDir 'AI 视频高清修复.lnk'
-  & (Join-Path $InstallDir 'repair-shortcut-windows.ps1') -InstallDir $InstallDir -DesktopDir $DesktopDir
+  $shortcutPath = & (Join-Path $InstallDir 'repair-shortcut-windows.ps1') -InstallDir $InstallDir -DesktopDir $DesktopDir -PassThru
 
   Write-Host "安装完成：$InstallDir" -ForegroundColor Green
   Write-Host "桌面快捷方式：$shortcutPath"
   if (-not $NoOpen) { Start-Process -FilePath $shortcutPath }
 }
 catch {
-  Write-Host "安装未完成：$($_.Exception.Message)" -ForegroundColor Red
+  if ($environmentReady) {
+    Write-Host "AI 环境已就绪，但桌面启动配置失败：$($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "无需删除模型；可以直接运行安装目录中的 start-windows.ps1：$InstallDir" -ForegroundColor Yellow
+  } else {
+    Write-Host "安装未完成：$($_.Exception.Message)" -ForegroundColor Red
+  }
   Write-Host "安装日志：$logPath" -ForegroundColor Yellow
   Write-Host '已下载的依赖会保留。重新运行同一条安装命令即可重试。'
   if (-not $NoOpen) { [void](Read-Host '请保留日志，按 Enter 退出') }

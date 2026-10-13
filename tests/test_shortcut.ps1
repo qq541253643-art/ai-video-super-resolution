@@ -36,5 +36,27 @@ try {
   & $repair -InstallDir $install -DesktopDir $desktop
   if (@(Get-ChildItem -LiteralPath $desktop -Filter '*.lnk').Count -ne 1) { throw 'Repair should update, not duplicate, the shortcut.' }
   Write-Host 'PASS: real Windows shortcut, redirected desktop, Unicode/space paths and repeated repair'
+
+  # Inject failure only for the Chinese filename; the fallback must be a real
+  # usable .lnk, and its actual path must reach the installer caller.
+  $fallbackDesktop = Join-Path $tempRoot 'Fallback Desktop'
+  $script:realShortcutShell = New-Object -ComObject WScript.Shell
+  $script:fakeShortcutShell = [PSCustomObject]@{RealShell=$script:realShortcutShell}
+  $script:fakeShortcutShell | Add-Member ScriptMethod CreateShortcut {
+    param($path)
+    if ([IO.Path]::GetFileName($path) -ne 'AI Video Restore.lnk') { throw 'EXPECTED_UNICODE_SHORTCUT_FAILURE' }
+    return $this.RealShell.CreateShortcut($path)
+  }
+  function New-Object { param([string]$ComObject); return $fakeShortcutShell }
+  try {
+    $created = & $repair -InstallDir $install -DesktopDir $fallbackDesktop -PassThru
+  } finally { Remove-Item Function:\New-Object }
+  $expected = Join-Path $fallbackDesktop 'AI Video Restore.lnk'
+  if ($created -ne $expected -or -not (Test-Path -LiteralPath $created)) { throw 'ASCII fallback path was not returned.' }
+  $fallbackLink = $script:realShortcutShell.CreateShortcut($created)
+  if ($fallbackLink.Arguments -ne $expectedArgs) { throw 'Fallback shortcut does not launch the same hidden worker.' }
+  $again = & $repair -InstallDir $install -DesktopDir $fallbackDesktop -PassThru
+  if ($again -ne $expected -or @(Get-ChildItem -LiteralPath $fallbackDesktop -Filter '*.lnk').Count -ne 1) { throw 'Fallback repair created duplicate icons.' }
+  Write-Host 'PASS: Unicode-failure injection creates a real ASCII fallback and repeated repair reuses it'
 }
 finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force }

@@ -42,6 +42,8 @@ irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/
 
 日常启动默认只打开浏览器，本机服务由 `pythonw.exe` 在后台运行，不常驻命令行窗口。关闭网页不会停止后台任务；再次打开快捷方式会复用服务。正在处理视频时暂不更新或重启服务。启动日志保存在安装目录的 `.runtime/logs/launcher.log`，运行日志在 `.runtime/logs/server.log`；启动失败会弹出提示，不会静默失败。首次安装和模型自检仍显示安装窗口。
 
+点击“批量选择视频”会打开支持高 DPI 的 Windows 多选窗口，选择期间显示在浏览器前面；关闭或取消后解除置顶，不改变默认目录。中文文件名按 UTF-8 传回本机服务。若桌面中文快捷方式保存失败，安装器会尝试英文名称 `AI Video Restore`；两种名称都无法保存时会保留已部署的模型，并提示检查桌面写入权限。
+
 安装日志自动保存到桌面 `AI-install-日期-时间.txt`。依赖下载失败会重试三次；Windows 自带 curl 可用时，模型和工具下载支持断点续传，失败保留 `.download` 文件，重跑原命令即可继续。没有 curl 的旧系统使用兼容下载方式重试，不支持该次下载续传。PyTorch 等 Python 包由 uv 管理下载缓存并重试，不保证单个 wheel 的字节级续传。不要删除安装目录和缓存。
 
 CodeFormer 与 Real-ESRGAN CUDA 模型文件均校验固定 SHA-256。只有真实 Real-ESRGAN 推理、CodeFormer CUDA 推理与人脸检测/解析模型加载、H.264 编码和面板健康接口全部通过后，才写入完成标记并创建桌面快捷方式。小样本自检报告保存在 `.runtime/install-selftest.json`；它验证环境可运行，不替代真人视频画质测试。失败时发送桌面安装日志，无需开放远程访问。

@@ -116,30 +116,32 @@ class JobManager:
 
 
 MANAGER = JobManager()
+PICKER_LOCK = threading.Lock()
 
 
 def _pick_files() -> list[str]:
     if os.name != "nt":
         return []
-    script = r"""
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Multiselect = $true
-$dialog.Filter = '视频文件|*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm|所有文件|*.*'
-$dialog.Title = '选择需要 AI 高清修复的视频'
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-  $dialog.FileNames | ForEach-Object { [Console]::Out.WriteLine($_) }
-}
-"""
-    result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-STA", "-Command", script],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    if not PICKER_LOCK.acquire(blocking=False):
+        raise MediaError("文件选择窗口已打开，请先选择视频或取消该窗口。")
+    script = Path(__file__).resolve().parents[1] / "pick-videos-windows.ps1"
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=600,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise MediaError("文件选择窗口等待超过 10 分钟，已关闭。请重新点击选择视频。") from error
+    except OSError as error:
+        raise MediaError(f"无法启动 Windows 文件选择器：{error}") from error
+    finally:
+        PICKER_LOCK.release()
     if result.returncode:
         raise MediaError(result.stderr.strip() or "无法打开 Windows 文件选择器。")
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]

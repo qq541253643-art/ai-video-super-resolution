@@ -40,6 +40,7 @@ def read_gpu() -> GpuSample:
             encoding="utf-8",
             errors="replace",
             timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         row = next(csv.reader([output.strip().splitlines()[0]], skipinitialspace=True))
         return GpuSample(name=row[0].strip(), used_mb=int(row[1]), total_mb=int(row[2]), utilization=int(row[3]))

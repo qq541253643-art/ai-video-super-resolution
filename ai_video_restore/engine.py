@@ -128,6 +128,65 @@ def find_face_python() -> Path:
     return candidate.resolve() if candidate.is_file() else Path(sys.executable).resolve()
 
 
+def sr_backend() -> str:
+    try:
+        state = json.loads((runtime_root() / "realesrgan-backend.json").read_text(encoding="utf-8"))
+        return "cuda" if state.get("backend") == "cuda" else "vulkan"
+    except (OSError, ValueError, AttributeError):
+        return "vulkan"
+
+
+def save_sr_backend(backend: str, reason: str = "") -> None:
+    root = runtime_root()
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / "realesrgan-backend.json"
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"backend": backend, "reason": reason}, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(target)
+
+
+def find_cuda_weights() -> Path:
+    weights = runtime_root() / "realesrgan" / "RealESRGAN_x4plus.pth"
+    if not weights.is_file():
+        raise MediaError("CUDA 版 Real-ESRGAN 权重未安装，请重新运行新版安装命令。")
+    return weights
+
+
+def run_sr_stage(
+    source_dir: Path, output_dir: Path, expected_frames: int, tile: int,
+    callback: ProgressCallback, backend: str | None = None,
+) -> tuple[StageMetric, str]:
+    selected = backend or sr_backend()
+    fallback_reason = ""
+    if selected == "vulkan":
+        ncnn = find_ncnn()
+        command = [str(ncnn), "-i", str(source_dir), "-o", str(output_dir),
+                   "-s", "4", "-t", str(tile), "-m", str(find_models(ncnn)),
+                   "-g", "0", "-j", "1:2:2", "-f", "png", "-n", "realesrgan-x4plus"]
+        try:
+            metric = _run_counted_stage(command, output_dir, expected_frames,
+                                        "高清增强 · Real-ESRGAN Vulkan", 0.05, 0.67, callback)
+            save_sr_backend("vulkan")
+            return metric, "vulkan"
+        except MediaError as error:
+            # Only initialization errors may select another backend. Preserve
+            # OOM, broken inputs and partially processed batches as real errors.
+            if "vkCreateInstance failed" not in str(error) or _count_frames(output_dir):
+                raise
+            fallback_reason = str(error)
+            callback({"stage": "Vulkan 初始化失败，切换 Real-ESRGAN CUDA", "progress": 0.05,
+                      "backend": "cuda", "fallback_reason": fallback_reason})
+    codeformer = find_codeformer()
+    command = [str(find_face_python()), str(Path(__file__).with_name("cuda_realesrgan.py")),
+               "--input", str(source_dir), "--output", str(output_dir), "--tile", str(tile),
+               "--weights", str(find_cuda_weights()), "--codeformer", str(codeformer)]
+    metric = _run_counted_stage(command, output_dir, expected_frames,
+                                "高清增强 · Real-ESRGAN CUDA", 0.05, 0.67, callback,
+                                cwd=codeformer)
+    save_sr_backend("cuda", fallback_reason)
+    return metric, "cuda"
+
+
 def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     process = subprocess.run(
         command,
@@ -137,6 +196,7 @@ def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedPro
         errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if process.returncode:
         tail = "\n".join(process.stdout.splitlines()[-30:])
@@ -171,6 +231,7 @@ def _run_counted_stage(
         errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     lines: list[str] = []
 
@@ -443,8 +504,6 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
     metadata = probe_video(source_path, ffprobe=ffprobe)
     duration = min(metadata.duration, options.duration_limit) if options.duration_limit else metadata.duration
     expected_frames = max(1, round(duration * float(metadata.fps)))
-    ncnn = find_ncnn()
-    models = find_models(ncnn)
 
     job_id = uuid.uuid4().hex[:12]
     work = data_root() / "work" / f"{source_path.stem}-{job_id}"
@@ -497,34 +556,8 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
         # Requesting -s 2 with this model corrupts tile placement in the official
         # 20220424 Windows binary, so the final target resize happens in FFmpeg.
         model_scale = 4
-        command = [
-            str(ncnn),
-            "-i",
-            str(original),
-            "-s",
-            str(model_scale),
-            "-t",
-            str(options.tile),
-            "-m",
-            str(models),
-            "-g",
-            "0",
-            "-j",
-            "1:2:2",
-            "-f",
-            "png",
-        ]
-        metrics.append(
-            _run_counted_stage(
-                command + ["-o", str(hd_raw), "-n", "realesrgan-x4plus"],
-                hd_raw,
-                actual_frames,
-                "高清增强 · Real-ESRGAN",
-                0.05,
-                0.67,
-                notify,
-            )
-        )
+        metric, backend = run_sr_stage(original, hd_raw, actual_frames, options.tile, notify)
+        metrics.append(metric)
         middle = max(1, actual_frames // 2)
         alignment_ssim = _validate_ai_alignment(
             ffmpeg,
@@ -603,6 +636,7 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
             "processed_duration": expected_duration,
             "tile": options.tile,
             "realesrgan_output_scale": model_scale,
+            "realesrgan_backend": backend,
             "natural_ai_mix": 0.78,
             "ai_alignment_ssim": round(alignment_ssim, 6),
             "face_enhance": options.face_enhance,

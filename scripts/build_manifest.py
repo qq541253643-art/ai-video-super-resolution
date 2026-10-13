@@ -28,6 +28,8 @@ FILES = [
     "ai_video_restore/server.py",
     "ai_video_restore/telemetry.py",
     "ai_video_restore/selftest.py",
+    "ai_video_restore/cuda_realesrgan.py",
+    "ai_video_restore/background.py",
     "ai_video_restore/static/index.html",
     "ai_video_restore/static/styles.css",
     "ai_video_restore/static/app.js",
@@ -41,7 +43,7 @@ def main() -> None:
         entries.append({"path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest().upper()})
     payload = {
         "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
-        "runtime_version": "3",
+        "runtime_version": "4",
         "files": entries,
     }
     (ROOT / "manifest.json").write_text(

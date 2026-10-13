@@ -113,6 +113,8 @@ if ($InstallCodeFormer) {
   Get-VerifiedDownload 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth' (Join-Path $codeFormerDir 'weights\CodeFormer\codeformer.pth') '1009E537E0C2A07D4CABCE6355F53CB66767CD4B4297EC7A4A64CA4B8A5684B7'
   Get-VerifiedDownload 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth' (Join-Path $codeFormerDir 'weights\facelib\detection_mobilenet0.25_Final.pth') '2979B33FFAFDA5D74B6948CD7A5B9A7A62F62B949CEF24E95FD15D2883A65220'
   Get-VerifiedDownload 'https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/parsing_parsenet.pth' (Join-Path $codeFormerDir 'weights\facelib\parsing_parsenet.pth') '3D558D8D0E42C20224F13CF5A29C79EBA2D59913419F945545D8CF7B72920DE2'
+  Write-Step '部署 Real-ESRGAN CUDA 备用模型（约 64 MB）'
+  Get-VerifiedDownload 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth' (Join-Path $ncnnDir 'RealESRGAN_x4plus.pth') '4FA0D38905F75AC06EB49A7951B426670021BE3018265FD191D2125DF9D682F1'
 }
 
 Write-Step '实际运行模型、编码与面板自检（通过后才创建快捷方式）'

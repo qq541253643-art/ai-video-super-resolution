@@ -9,7 +9,7 @@ function Get-VerifiedDownload([string]$Uri, [string]$Destination, [string]$Sha25
     Move-Item -LiteralPath $partial -Destination $Destination -Force
     return
   }
-  $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue
+  $curl = Get-Command curl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -99,7 +99,7 @@ function Ensure-BasicTools([string]$RuntimeDir) {
     Add-RuntimePath $RuntimeDir
   }
   foreach ($tool in @('uv.exe', 'ffmpeg.exe', 'ffprobe.exe')) {
-    $command = Get-Command $tool -CommandType Application -ErrorAction Stop
+    $command = Get-Command $tool -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $argument = if ($tool -eq 'uv.exe') { '--version' } else { '-version' }
     $version = & $command.Source $argument
     if ($LASTEXITCODE -ne 0) { throw "$tool failed to start (exit $LASTEXITCODE)." }

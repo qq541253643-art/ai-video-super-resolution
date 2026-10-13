@@ -31,7 +31,7 @@ try {
   $shell = New-Object -ComObject WScript.Shell
   $link = $shell.CreateShortcut($links[0].FullName)
   $expectedTarget = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $expectedArgs = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $install 'start-windows.ps1') + '"'
+  $expectedArgs = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $install 'start-windows.ps1') + '"'
   if ($link.TargetPath -ne $expectedTarget -or $link.Arguments -ne $expectedArgs -or $link.WorkingDirectory -ne $install) { throw 'Shortcut launch properties are incorrect.' }
   & $repair -InstallDir $install -DesktopDir $desktop
   if (@(Get-ChildItem -LiteralPath $desktop -Filter '*.lnk').Count -ne 1) { throw 'Repair should update, not duplicate, the shortcut.' }

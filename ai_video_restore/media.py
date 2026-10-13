@@ -70,7 +70,8 @@ def probe_video(path: str | Path, ffprobe: str | None = None) -> VideoMetadata:
         str(source),
     ]
     try:
-        payload = json.loads(subprocess.check_output(command, text=True, encoding="utf-8"))
+        payload = json.loads(subprocess.check_output(command, text=True, encoding="utf-8",
+                                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
     except (subprocess.CalledProcessError, json.JSONDecodeError) as error:
         raise MediaError(f"FFprobe 无法读取视频：{source.name}") from error
 

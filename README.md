@@ -40,9 +40,13 @@ irm https://raw.githubusercontent.com/qq541253643-art/ai-video-super-resolution/
 
 首次安装需下载数 GB 的 PyTorch 与模型文件，耗时取决于网络。以后双击桌面快捷方式会先检查仓库更新；断网或检查失败时继续使用本地版本。
 
+日常启动默认只打开浏览器，本机服务由 `pythonw.exe` 在后台运行，不常驻命令行窗口。关闭网页不会停止后台任务；再次打开快捷方式会复用服务。正在处理视频时暂不更新或重启服务。启动日志保存在安装目录的 `.runtime/logs/launcher.log`，运行日志在 `.runtime/logs/server.log`；启动失败会弹出提示，不会静默失败。首次安装和模型自检仍显示安装窗口。
+
 安装日志自动保存到桌面 `AI-install-日期-时间.txt`。依赖下载失败会重试三次；Windows 自带 curl 可用时，模型和工具下载支持断点续传，失败保留 `.download` 文件，重跑原命令即可继续。没有 curl 的旧系统使用兼容下载方式重试，不支持该次下载续传。PyTorch 等 Python 包由 uv 管理下载缓存并重试，不保证单个 wheel 的字节级续传。不要删除安装目录和缓存。
 
-CodeFormer 三个模型文件均校验固定 SHA-256。只有真实 Real-ESRGAN 推理、CodeFormer CUDA 推理与人脸检测/解析模型加载、H.264 编码和面板健康接口全部通过后，才写入完成标记并创建桌面快捷方式。小样本自检报告保存在 `.runtime/install-selftest.json`；它验证环境可运行，不替代真人视频画质测试。失败时发送桌面安装日志，无需开放远程访问。
+CodeFormer 与 Real-ESRGAN CUDA 模型文件均校验固定 SHA-256。只有真实 Real-ESRGAN 推理、CodeFormer CUDA 推理与人脸检测/解析模型加载、H.264 编码和面板健康接口全部通过后，才写入完成标记并创建桌面快捷方式。小样本自检报告保存在 `.runtime/install-selftest.json`；它验证环境可运行，不替代真人视频画质测试。失败时发送桌面安装日志，无需开放远程访问。
+
+默认安装包含 Real-ESRGAN CUDA 备用权重（约 64 MB）。Vulkan 初始化报 `vkCreateInstance failed` 时，自动尝试同一 x4plus 模型的 CUDA 实现；成功后记住该后端，批量视频处理也使用它。面板、日志和视频报告显示实际使用的 Vulkan/CUDA。CUDA 同样失败时停止安装并保留错误，不会回退成普通放大或 CPU 推理，也不会修改系统驱动。显存不足等非初始化错误不会被自动切换掩盖；可尝试减小 Tile。
 
 v0.1.1 修复了 Windows PowerShell 5.1 执行一键安装时的 `InvalidLeftHandSide` 报错。入口脚本为无 BOM 的 ASCII 文本，中文安装器下载到本地后通过 `-File` 执行；执行策略仅在安装进程内使用 Bypass，不修改系统设置。
 
@@ -65,6 +69,7 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 ```
 
 本机面板只监听 `127.0.0.1:8765`，不会向局域网开放。
+如果该端口已被其他工具占用，可以运行 `powershell -ExecutionPolicy Bypass -File .\start-windows.ps1 -Port 18765` 使用另一个本机端口；默认桌面快捷方式仍使用 8765。
 
 ## 5 秒真实模型测试
 
@@ -82,7 +87,7 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1
 - 自然增强：同一次真实 Real-ESRGAN 推理结果与原始画面按 78%/22% 做保真融合，减少重复推理和过度锐化；不是普通缩放冒充 AI。
 - 人脸增强：高清增强背景 + CodeFormer 人脸恢复。
 - 视频：FFmpeg 解码、CFR 图像序列重建、AAC 音频同步与 H.264 编码。
-- GPU：Real-ESRGAN 使用官方 NCNN Vulkan 实现；CodeFormer 使用 PyTorch CUDA。
+- GPU：Real-ESRGAN 优先使用官方 NCNN Vulkan，初始化失败时使用 CodeFormer 固定源码中附带的 RealESRGANer / PyTorch CUDA，运行官方 RealESRGAN_x4plus 权重；CodeFormer 使用 PyTorch CUDA。
 
 `报告+原名.json` 包含模型阶段 FPS、GPU 显存基线/峰值/增量、总耗时、输出路径和音视频校验结果。
 

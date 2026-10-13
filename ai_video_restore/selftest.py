@@ -13,14 +13,15 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__
-from .engine import find_codeformer, find_models, find_ncnn, runtime_root
+from .engine import find_codeformer, run_sr_stage, runtime_root
 from .media import executable, probe_video
 from .server import Handler
 
 
 def run_command(args: list[str], *, cwd: Path | None = None) -> None:
     result = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", timeout=600)
+                            encoding="utf-8", errors="replace", timeout=600,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if result.returncode:
         raise RuntimeError(f"{args[0]} exited {result.returncode}\n{result.stdout}\n{result.stderr}")
     if result.stdout:
@@ -34,12 +35,18 @@ def run(skip_face: bool = False) -> dict:
     # Isolate generated inputs and outputs; never touch the user's videos.
     with tempfile.TemporaryDirectory(prefix="ai-selftest-") as temporary:
         work = Path(temporary)
-        source, restored, video = work / "input.png", work / "output.png", work / "test.mp4"
+        original, output = work / "input", work / "output"
+        original.mkdir()
+        source, restored, video = original / "input.png", output / "input.png", work / "test.mp4"
         run_command([ffmpeg, "-v", "error", "-y", "-f", "lavfi", "-i",
                      "testsrc2=size=64x64:rate=1", "-frames:v", "1", str(source)])
-        ncnn = find_ncnn()
-        run_command([str(ncnn), "-i", str(source), "-o", str(restored), "-m",
-                     str(find_models(ncnn)), "-n", "realesrgan-x4plus", "-s", "4", "-t", "128", "-g", "0"])
+        def progress(event):
+            print(event["stage"], flush=True)
+            if event.get("fallback_reason"):
+                print(event["fallback_reason"], flush=True)
+
+        # Re-probe Vulkan on installation; normal processing reuses the tested backend.
+        metric, backend = run_sr_stage(original, output, 1, 128, progress, backend="vulkan")
         if not restored.is_file():
             raise RuntimeError("Real-ESRGAN did not produce an image")
         run_command([ffmpeg, "-v", "error", "-y", "-loop", "1", "-i", str(restored),
@@ -47,8 +54,8 @@ def run(skip_face: bool = False) -> dict:
         metadata = probe_video(video)
         if (metadata.width, metadata.height, metadata.video_codec) != (256, 256, "h264"):
             raise RuntimeError("Real-ESRGAN 4x / H.264 output validation failed")
-        checks.extend(["Real-ESRGAN Vulkan inference", "FFmpeg H.264 encode + FFprobe"])
-        print("PASS: Real-ESRGAN actual 4x inference and H.264 encoding", flush=True)
+        checks.extend([f"Real-ESRGAN {backend} inference", "FFmpeg H.264 encode + FFprobe"])
+        print(f"PASS: Real-ESRGAN {backend} actual 4x inference and H.264 encoding", flush=True)
 
     if not skip_face:
         codeformer = find_codeformer()
@@ -91,6 +98,7 @@ print('PASS: CodeFormer CUDA forward, face detector and parser loaded; GPU=' + t
         thread.join(timeout=5)
     checks.append("panel health and environment API")
     report = {"version": __version__, "ok": True, "checks": checks,
+              "realesrgan_backend": backend, "realesrgan_metric": metric.as_dict(),
               "seconds": round(time.monotonic() - started, 2)}
     runtime_root().mkdir(parents=True, exist_ok=True)
     (runtime_root() / "install-selftest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

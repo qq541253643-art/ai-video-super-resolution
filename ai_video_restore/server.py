@@ -5,6 +5,7 @@ import mimetypes
 import os
 import queue
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -17,7 +18,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from . import __version__
-from .engine import ProcessOptions, find_codeformer, find_ncnn, process_video
+from .engine import ProcessOptions, find_codeformer, find_cuda_weights, find_ncnn, process_video, sr_backend
 from .media import MediaError, probe_video
 from .telemetry import read_gpu
 
@@ -137,6 +138,7 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode:
         raise MediaError(result.stderr.strip() or "无法打开 Windows 文件选择器。")
@@ -145,8 +147,9 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 
 def _environment() -> dict[str, object]:
     gpu = read_gpu()
+    backend = sr_backend()
     try:
-        ncnn = str(find_ncnn())
+        ncnn = str(find_cuda_weights() if backend == "cuda" else find_ncnn())
     except MediaError:
         ncnn = None
     try:
@@ -158,8 +161,9 @@ def _environment() -> dict[str, object]:
         "gpu": asdict(gpu),
         "ffmpeg": shutil.which("ffmpeg"),
         "realesrgan": ncnn,
+        "realesrgan_backend": backend,
         "codeformer": codeformer,
-        "ready": bool(gpu.total_mb and ncnn and shutil.which("ffmpeg")),
+        "ready": bool(gpu.total_mb and ncnn and shutil.which("ffmpeg") and (backend != "cuda" or codeformer)),
     }
 
 
@@ -209,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"jobs": MANAGER.snapshot()})
             return
         if route == "/health":
-            self._json({"ok": True, "version": __version__})
+            self._json({"ok": True, "app": "ai-video-restore", "version": __version__})
             return
         relative = "index.html" if route == "/" else unquote(route.lstrip("/"))
         target = (STATIC_ROOT / relative).resolve()
@@ -264,6 +268,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
                 return
             if route == "/api/shutdown":
+                if any(job["status"] in {"running", "queued"} for job in MANAGER.snapshot()):
+                    self._json({"error": "正在处理视频，不能停止服务。"}, status=409)
+                    return
                 self._json({"ok": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -272,8 +279,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(error)}, status=400)
 
 
+class LocalHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        # Windows SO_REUSEADDR can permit two workers to bind the same port.
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def run(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
-    server = ThreadingHTTPServer((host, port), Handler)
+    server = LocalHTTPServer((host, port), Handler)
     url = f"http://{host}:{port}"
     print(f"AI 视频高清修复 v{__version__}：{url}")
     if open_browser:

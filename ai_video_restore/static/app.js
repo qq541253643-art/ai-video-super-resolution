@@ -103,10 +103,11 @@ async function loadEnvironment() {
     state.environment = env;
     el.version.textContent = `v${env.version}`;
     el.gpuName.textContent = env.gpu.total_mb ? `${env.gpu.name} · ${Math.round(env.gpu.total_mb / 1024)}GB` : "未检测到";
-    el.realesrganState.textContent = env.realesrgan ? "已安装" : "未安装";
+    const backend = env.realesrgan_backend === "cuda" ? "CUDA" : "Vulkan";
+    el.realesrganState.textContent = env.realesrgan ? `已安装 · ${backend}` : "未安装";
     el.codeformerState.textContent = env.codeformer ? "已安装" : "未安装";
     el.faceToggle.disabled = !env.codeformer;
-    el.modelChipText.textContent = env.realesrgan ? "Real-ESRGAN 已就绪" : "Real-ESRGAN 未就绪";
+    el.modelChipText.textContent = env.realesrgan ? `Real-ESRGAN · ${backend}` : "Real-ESRGAN 未就绪";
     el.deviceState.className = `device-state ${env.ready ? "ready" : "error"}`;
     el.deviceLabel.textContent = env.ready ? `${env.gpu.name} · 本机推理` : "环境未就绪，请重新安装";
     el.footerStatus.textContent = env.ready ? "模型与 FFmpeg 已就绪" : "环境检查未通过";

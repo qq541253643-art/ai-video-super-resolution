@@ -36,6 +36,7 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"/></svg>
           </button>
         </div>
+        <button class="secondary-button queue-add" id="addVideosButton" type="button">继续添加视频</button>
         <div class="queue-list" id="queueList">
           <div class="empty-queue">
             <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 12h13l4 5h15v22H8zM16 28h16M24 22v12"/></svg>
@@ -60,7 +61,7 @@
         <div class="active-run" id="activeRun" hidden>
           <div class="run-head">
             <div>
-              <span class="running-label">正在处理</span>
+              <span class="running-label" id="runStateLabel">正在处理</span>
               <h2 id="activeName">—</h2>
             </div>
             <strong id="activePercent">0%</strong>
@@ -71,12 +72,16 @@
             <div><span>推理速度</span><strong id="activeFps">计算中</strong></div>
             <div><span>预计完成</span><strong id="activeEta">计算中</strong></div>
           </div>
-          <p class="run-tip">处理中可以继续添加视频，它们会自动排入队列。</p>
+          <div class="job-actions">
+            <button class="secondary-button" id="pauseButton" type="button">暂停</button>
+            <button class="secondary-button danger-button" id="cancelButton" type="button">终止当前视频</button>
+          </div>
+          <p class="run-tip">暂停在当前小批次或步骤结束后生效；终止会停止当前处理。源视频不受影响，已完成的输出保留。</p>
         </div>
 
         <div class="completed-summary" id="completedSummary" hidden>
           <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 17l6 6L26 9"/></svg>
-          <div><strong>本批次已完成</strong><span id="completedText">输出已保存到原视频文件夹</span></div>
+          <div><strong id="completedTitle">本批次已完成</strong><span id="completedText">输出已保存到原视频文件夹</span></div>
         </div>
       </section>
 
@@ -104,14 +109,20 @@
 
           <fieldset class="setting-group">
             <legend>显存设置</legend>
+            <label class="field-label" for="resourceMode">运行模式（新提交的任务生效）</label>
+            <select id="resourceMode">
+              <option value="smooth" selected>流畅模式 · 给日常使用留余量</option>
+              <option value="full">全速模式 · 优先处理速度</option>
+            </select>
+            <p class="field-help">流畅模式限制 CPU 线程和进程优先级，按小批次检查显存、内存；资源紧张时等待。不是固定资源预留，仍可能短时高负载。</p>
             <label class="field-label" for="tileSelect">Tile 分块</label>
             <select id="tileSelect">
-              <option value="128">128 · 最省显存</option>
-              <option value="256" selected>256 · 8GB 推荐</option>
-              <option value="384">384 · 更快</option>
+              <option value="128" selected>128 · 低显存占用</option>
+              <option value="256">256</option>
+              <option value="384">384</option>
               <option value="512">512 · 高显存占用</option>
             </select>
-            <p class="field-help">若出现显存不足，改成 128 后重试。</p>
+            <p class="field-help">流畅模式最大使用 128；显存不足会减小分块重试。全速模式使用所选值。</p>
           </fieldset>
 
           <fieldset class="setting-group output-rule">
@@ -132,6 +143,7 @@
         <div class="action-area">
           <div class="batch-eta"><span>本批预计完成</span><strong id="batchEta">等待导入</strong></div>
           <button class="start-button" id="startButton" type="button" disabled>开始高清修复</button>
+          <button class="secondary-button danger-button" id="cancelAllButton" type="button" hidden>终止并取消全部排队</button>
         </div>
       </aside>
     </main>

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -15,6 +17,7 @@ from pathlib import Path
 
 from .media import MediaError, VideoMetadata, assert_safe_output, prefixed_output, probe_video
 from .telemetry import GpuMonitor
+from .control import CURRENT, JobControl
 
 
 ProgressCallback = Callable[[dict[str, object]], None]
@@ -29,6 +32,7 @@ class ProcessOptions:
     output_width: int = 1080
     output_height: int = 1920
     keep_work: bool = False
+    resource_mode: str = "smooth"
 
 
 @dataclass
@@ -157,12 +161,14 @@ def run_sr_stage(
     callback: ProgressCallback, backend: str | None = None,
 ) -> tuple[StageMetric, str]:
     selected = backend or sr_backend()
+    control = CURRENT.get()
+    tile = control.tile(tile) if control else tile
     fallback_reason = ""
     if selected == "vulkan":
         ncnn = find_ncnn()
         command = [str(ncnn), "-i", str(source_dir), "-o", str(output_dir),
                    "-s", "4", "-t", str(tile), "-m", str(find_models(ncnn)),
-                   "-g", "0", "-j", "1:2:2", "-f", "png", "-n", "realesrgan-x4plus"]
+                   "-g", "0", "-j", "1:1:1" if control and control.mode == "smooth" else "1:2:2", "-f", "png", "-n", "realesrgan-x4plus"]
         try:
             metric = _run_counted_stage(command, output_dir, expected_frames,
                                         "高清增强 · Real-ESRGAN Vulkan", 0.05, 0.67, callback)
@@ -188,7 +194,13 @@ def run_sr_stage(
 
 
 def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    process = subprocess.run(
+    control = CURRENT.get()
+    if control:
+        control.checkpoint()
+        command, environment, flags = control.prepare_command(command)
+    else:
+        environment, flags = None, getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    process = subprocess.Popen(
         command,
         cwd=str(cwd) if cwd else None,
         text=True,
@@ -196,12 +208,26 @@ def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedPro
         errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        creationflags=flags,
+        env=environment,
     )
+    try:
+        while True:
+            try:
+                stdout, _ = process.communicate(timeout=0.25)
+                break
+            except subprocess.TimeoutExpired:
+                if control:
+                    control.check_cancel()
+                    control.check_disk()
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
     if process.returncode:
-        tail = "\n".join(process.stdout.splitlines()[-30:])
+        tail = "\n".join(stdout.splitlines()[-30:])
         raise MediaError(f"命令执行失败（{process.returncode}）：\n{tail}")
-    return process
+    return subprocess.CompletedProcess(command, process.returncode, stdout)
 
 
 def _count_frames(folder: Path) -> int:
@@ -209,6 +235,83 @@ def _count_frames(folder: Path) -> int:
 
 
 def _run_counted_stage(
+    command: list[str], output_dir: Path, expected_frames: int,
+    stage_name: str, stage_offset: float, stage_span: float,
+    callback: ProgressCallback, cwd: Path | None = None,
+    environment: dict[str, str] | None = None,
+) -> StageMetric:
+    control = CURRENT.get()
+    if not control:
+        return _execute_counted_stage(command, output_dir, expected_frames, stage_name,
+                                      stage_offset, stage_span, callback, cwd, environment)
+    input_index = command.index("--input") + 1 if "--input" in command else command.index("-i") + 1
+    output_index = command.index("--output") + 1 if "--output" in command else command.index("-o") + 1
+    files = sorted(Path(command[input_index]).glob("*.png"))
+    if len(files) != expected_frames:
+        raise MediaError("模型输入帧数与预期不一致。")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    monitor = GpuMonitor().start()
+    completed = 0
+    chunk_size = 4 if control.mode == "smooth" else 16
+    try:
+        for start in range(0, len(files), chunk_size):
+            control.checkpoint(gpu=True)
+            with tempfile.TemporaryDirectory(prefix="model-chunk-", dir=output_dir.parent) as scratch:
+                root = Path(scratch)
+                inputs, outputs = root / "input", root / "output"
+                inputs.mkdir()
+                outputs.mkdir()
+                batch = files[start:start + chunk_size]
+                for source in batch:
+                    try:
+                        os.link(source, inputs / source.name)
+                    except OSError:
+                        shutil.copyfile(source, inputs / source.name)
+                args = list(command)
+                args[input_index], args[output_index] = str(inputs), str(outputs)
+                result_dir = outputs / "final_results" if output_dir.name == "final_results" else outputs
+
+                def progress(event: dict[str, object]) -> None:
+                    count = completed + int(event.get("stage_frames", 0))
+                    elapsed = max(0.001, time.perf_counter() - started)
+                    callback({**event, "stage_frames": count, "stage_total_frames": expected_frames,
+                              "progress": stage_offset + stage_span * count / expected_frames,
+                              "stage_fps": count / elapsed,
+                              "remaining_seconds": (expected_frames - count) * elapsed / count if count else None})
+
+                while True:
+                    try:
+                        _execute_counted_stage(args, result_dir, len(batch), stage_name,
+                                               0, 1, progress, cwd, environment)
+                        break
+                    except MediaError as error:
+                        message = str(error).lower()
+                        tile_flag = "--tile" if "--tile" in args else "-t" if "-t" in args else None
+                        oom = any(text in message for text in ("out of memory", "failed to allocate", "vk_error_out_of_device_memory"))
+                        if not oom or not tile_flag or int(args[args.index(tile_flag) + 1]) <= 32:
+                            raise
+                        index = args.index(tile_flag) + 1
+                        args[index] = str(max(32, int(args[index]) // 2))
+                        command[command.index(tile_flag) + 1] = args[index]
+                        control.min_tile = min(control.min_tile, int(args[index]))
+                        for partial in result_dir.glob("*.png"):
+                            partial.unlink()
+                        callback({"stage": f"显存不足，减小 Tile 为 {args[index]} 后重新推理", "remaining_seconds": None})
+                        control.checkpoint(gpu=True)
+                for source in batch:
+                    (result_dir / source.name).replace(output_dir / source.name)
+                completed += len(batch)
+            if control.mode == "smooth":
+                control.cancel_requested.wait(0.15)
+        control.checkpoint()
+    finally:
+        gpu = monitor.stop()
+    elapsed = time.perf_counter() - started
+    return StageMetric(stage_name, completed, elapsed, completed / max(elapsed, 0.001), gpu)
+
+
+def _execute_counted_stage(
     command: list[str],
     output_dir: Path,
     expected_frames: int,
@@ -220,19 +323,24 @@ def _run_counted_stage(
     environment: dict[str, str] | None = None,
 ) -> StageMetric:
     output_dir.mkdir(parents=True, exist_ok=True)
+    control = CURRENT.get()
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if control:
+        control.checkpoint()
+        command, base_environment, flags = control.prepare_command(command)
+        environment = {**(environment or {}), **base_environment,
+                       **({"TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"} if environment and environment.get("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD") else {})}
     monitor = GpuMonitor().start()
     started = time.perf_counter()
-    process = subprocess.Popen(
-        command,
-        cwd=str(cwd) if cwd else None,
-        env=environment,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    try:
+        process = subprocess.Popen(
+            command, cwd=str(cwd) if cwd else None, env=environment,
+            text=True, encoding="utf-8", errors="replace", stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, creationflags=flags,
+        )
+    except OSError:
+        monitor.stop()
+        raise
     lines: list[str] = []
 
     def drain() -> None:
@@ -246,27 +354,31 @@ def _run_counted_stage(
     reader = threading.Thread(target=drain, daemon=True)
     reader.start()
     last_count = -1
-    while process.poll() is None:
-        count = min(expected_frames, _count_frames(output_dir))
-        if count != last_count:
-            elapsed = max(0.001, time.perf_counter() - started)
-            fps = count / elapsed
-            remaining = (expected_frames - count) / fps if fps > 0 and count >= 2 else None
-            callback(
-                {
-                    "stage": stage_name,
-                    "stage_frames": count,
-                    "stage_total_frames": expected_frames,
-                    "progress": stage_offset + stage_span * (count / max(1, expected_frames)),
-                    "stage_fps": fps,
-                    "remaining_seconds": remaining,
-                }
-            )
-            last_count = count
-        time.sleep(0.35)
-    reader.join(timeout=5)
+    try:
+        while process.poll() is None:
+            if control:
+                control.check_cancel()
+                control.check_disk()
+            count = min(expected_frames, _count_frames(output_dir))
+            if count != last_count:
+                elapsed = max(0.001, time.perf_counter() - started)
+                fps = count / elapsed
+                remaining = (expected_frames - count) / fps if fps > 0 and count >= 2 else None
+                callback({"stage": stage_name, "stage_frames": count,
+                          "stage_total_frames": expected_frames,
+                          "progress": stage_offset + stage_span * count / max(1, expected_frames),
+                          "stage_fps": fps, "remaining_seconds": remaining})
+                last_count = count
+            time.sleep(0.25)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        reader.join(timeout=5)
+        if process.stdout:
+            process.stdout.close()
+        gpu = monitor.stop()
     elapsed = time.perf_counter() - started
-    gpu = monitor.stop()
     if process.returncode:
         raise MediaError(f"{stage_name} 失败：\n" + "\n".join(lines[-30:]))
     frames = _count_frames(output_dir)
@@ -384,13 +496,82 @@ def _validate_ai_alignment(
             "-",
         ]
     )
-    match = re.search(r"All:([0-9.]+)", result.stdout)
+    match = re.search(r"All:([-+0-9.eE]+)", result.stdout)
     if not match:
         raise MediaError("无法校验 AI 帧的空间对齐。")
     score = float(match.group(1))
-    if score < 0.72:
-        raise MediaError(f"AI 输出疑似发生 Tile 拼块错位（SSIM {score:.3f}），已停止生成错误视频。")
+    if not math.isfinite(score) or score < 0.72:
+        raise MediaError(f"AI 输出与原帧差异异常（SSIM {score:.3f}），未通过画面检查；不能仅凭此值确定 Tile 错位。")
     return score
+
+
+def _checked_sr(ffmpeg: str, original: Path, output: Path, count: int,
+                options: ProcessOptions, notify: ProgressCallback) -> tuple[list[StageMetric], str, float]:
+    """Test sparse frames before the expensive batch; never waive quality checks."""
+    from struct import unpack
+
+    samples = sorted({1, max(1, count // 2), count})
+    probe_in = original.parent / "quality-input"
+    probe_in.mkdir()
+    for index in samples:
+        source = original / f"{index:08d}.png"
+        shutil.copyfile(source, probe_in / source.name)
+    first = probe_in / f"{samples[0]:08d}.png"
+    # FFmpeg autorotation can swap the coded video dimensions. Compare against
+    # the actual decoded PNG, not the container's width/height metadata.
+    with first.open("rb") as handle:
+        header = handle.read(24)
+    width, height = unpack(">II", header[16:24])
+    selected = sr_backend()
+    control = CURRENT.get()
+    validated_tile = control.tile(options.tile) if control else options.tile
+    metrics: list[StageMetric] = []
+    attempts: list[dict[str, object]] = []
+    for attempt in range(2):
+        probe_out = original.parent / f"quality-{attempt}"
+        scores = []
+        try:
+            notify({"stage": f"检查 AI 画面 · {selected.upper()}", "progress": 0.05})
+            metric, selected = run_sr_stage(probe_in, probe_out, len(samples), validated_tile,
+                                            lambda event: notify({**event, "progress": 0.05,
+                                                                   "stage": "抽帧检查 · " + str(event.get("stage", ""))}), selected)
+            metrics.append(metric)
+            for index in samples:
+                name = f"{index:08d}.png"
+                scores.append(_validate_ai_alignment(ffmpeg, probe_in / name, probe_out / name, width, height))
+            attempts.append({"backend": selected, "ssim": scores})
+            break
+        except MediaError as error:
+            attempts.append({"backend": selected, "error": str(error)})
+            if selected == "vulkan" and attempt == 0:
+                selected = "cuda"
+                validated_tile = min(validated_tile, 128)
+                notify({"stage": "Vulkan 抽帧检查失败，使用 CUDA 重新验证", "progress": 0.05,
+                        "remaining_seconds": None})
+                continue
+            diagnostic = data_root() / "diagnostics" / original.parent.name
+            diagnostic.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(probe_in, diagnostic / "original", dirs_exist_ok=True)
+            for folder in original.parent.glob("quality-[0-9]*"):
+                shutil.copytree(folder, diagnostic / folder.name, dirs_exist_ok=True)
+            (diagnostic / "quality.json").write_text(json.dumps(attempts, ensure_ascii=False, indent=2), encoding="utf-8")
+            raise MediaError(f"AI 抽帧检查未通过，已停止处理。诊断文件：{diagnostic}\n{error}") from error
+    # The full run uses the validated small tile as well. A successful probe
+    # does not establish that a different tile/backend combination is safe.
+    metric, backend = run_sr_stage(original, output, count, validated_tile, notify, selected)
+    metrics.append(metric)
+    for index in samples:
+        name = f"{index:08d}.png"
+        try:
+            _validate_ai_alignment(ffmpeg, original / name, output / name, width, height)
+        except MediaError as error:
+            diagnostic = data_root() / "diagnostics" / original.parent.name
+            diagnostic.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original / name, diagnostic / f"original-{name}")
+            shutil.copyfile(output / name, diagnostic / f"ai-{name}")
+            (diagnostic / "quality.json").write_text(json.dumps({"backend": backend, "error": str(error)}, ensure_ascii=False), encoding="utf-8")
+            raise MediaError(f"批量推理后画面检查未通过，未编码输出。诊断文件：{diagnostic}\n{error}") from error
+    return metrics, backend, min(scores)
 
 
 def _encode_video(
@@ -488,12 +669,26 @@ def _validate_output(path: Path, source_meta: VideoMetadata, expected_duration: 
         raise MediaError(f"输出编码错误：{path.name} 不是 H.264。")
     if duration_delta > tolerance:
         raise MediaError(f"输出时长偏差过大：{path.name} 偏差 {duration_delta:.3f} 秒。")
+    if abs(float(output_meta.fps) - float(source_meta.fps)) > 0.001:
+        raise MediaError(f"输出帧率与源视频不符：{path.name}。")
     if source_meta.has_audio and not output_meta.has_audio:
         raise MediaError(f"输出缺少音频：{path.name}")
     return {"path": str(path), "duration": output_meta.duration, "duration_delta": duration_delta, "fps": float(output_meta.fps)}
 
 
-def process_video(source: str | Path, options: ProcessOptions, callback: ProgressCallback | None = None) -> dict[str, object]:
+def process_video(source: str | Path, options: ProcessOptions, callback: ProgressCallback | None = None,
+                  control: JobControl | None = None) -> dict[str, object]:
+    control = control or JobControl(options.resource_mode)
+    control.notify = callback or (lambda _: None)
+    token = CURRENT.set(control)
+    try:
+        control.checkpoint()
+        return _process_video(source, options, callback)
+    finally:
+        CURRENT.reset(token)
+
+
+def _process_video(source: str | Path, options: ProcessOptions, callback: ProgressCallback | None = None) -> dict[str, object]:
     notify = callback or (lambda _: None)
     started_wall = time.time()
     source_path = Path(source).expanduser().resolve()
@@ -515,6 +710,9 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
     face_frames = work / "face-1080"
     for folder in (original, hd_raw, source_frames, natural_frames, hd_frames):
         folder.mkdir(parents=True, exist_ok=True)
+    control = CURRENT.get()
+    if control:
+        control.disk_paths = [work, source_path.parent]
 
     metrics: list[StageMetric] = []
     output_paths: dict[str, Path] = {
@@ -556,16 +754,9 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
         # Requesting -s 2 with this model corrupts tile placement in the official
         # 20220424 Windows binary, so the final target resize happens in FFmpeg.
         model_scale = 4
-        metric, backend = run_sr_stage(original, hd_raw, actual_frames, options.tile, notify)
-        metrics.append(metric)
+        sr_metrics, backend, alignment_ssim = _checked_sr(ffmpeg, original, hd_raw, actual_frames, options, notify)
+        metrics.extend(sr_metrics)
         middle = max(1, actual_frames // 2)
-        alignment_ssim = _validate_ai_alignment(
-            ffmpeg,
-            original / f"{middle:08d}.png",
-            hd_raw / f"{middle:08d}.png",
-            metadata.width,
-            metadata.height,
-        )
 
         notify({"stage": "生成自然保真版", "progress": 0.73})
         _normalize_sequence(ffmpeg, original, source_frames, metadata, options)
@@ -635,6 +826,8 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
             "processed_frames": actual_frames,
             "processed_duration": expected_duration,
             "tile": options.tile,
+            "effective_min_tile": control.min_tile if control else options.tile,
+            "resource_mode": options.resource_mode,
             "realesrgan_output_scale": model_scale,
             "realesrgan_backend": backend,
             "natural_ai_mix": 0.78,
@@ -652,6 +845,9 @@ def process_video(source: str | Path, options: ProcessOptions, callback: Progres
         notify({"stage": "完成", "progress": 1.0, "remaining_seconds": 0, "outputs": report["outputs"]})
         return report
     finally:
+        for path in output_paths.values():
+            if path.suffix == ".mp4":
+                path.with_suffix(".partial.mp4").unlink(missing_ok=True)
         if work.exists() and not options.keep_work:
             shutil.rmtree(work, ignore_errors=True)
 
@@ -660,6 +856,18 @@ def process_face_version(
     source: str | Path,
     options: ProcessOptions,
     callback: ProgressCallback | None = None,
+) -> dict[str, object]:
+    control = JobControl(options.resource_mode)
+    control.notify = callback or (lambda _: None)
+    token = CURRENT.set(control)
+    try:
+        return _process_face_version(source, options, callback)
+    finally:
+        CURRENT.reset(token)
+
+
+def _process_face_version(
+    source: str | Path, options: ProcessOptions, callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Create only the CodeFormer version from an existing HD result."""
     notify = callback or (lambda _: None)
@@ -682,6 +890,9 @@ def process_face_version(
     face_result = work / "codeformer"
     face_frames = face_result / "final_results"
     hd_frames.mkdir(parents=True, exist_ok=True)
+    control = CURRENT.get()
+    if control:
+        control.disk_paths = [work, source_path.parent]
     face_output = prefixed_output(source_path, "人脸")
     comparison_output = prefixed_output(source_path, "对比", ".jpg")
 
@@ -786,6 +997,7 @@ def process_face_version(
         notify({"stage": "完成", "progress": 1.0, "remaining_seconds": 0, "outputs": report["outputs"]})
         return report
     finally:
+        face_output.with_suffix(".partial.mp4").unlink(missing_ok=True)
         if work.exists() and not options.keep_work:
             shutil.rmtree(work, ignore_errors=True)
 

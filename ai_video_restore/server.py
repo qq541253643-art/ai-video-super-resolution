@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import traceback
+import uuid
 import webbrowser
 from dataclasses import asdict, dataclass, field
 from http import HTTPStatus
@@ -21,6 +22,7 @@ from . import __version__
 from .engine import ProcessOptions, find_codeformer, find_cuda_weights, find_ncnn, process_video, sr_backend
 from .media import MediaError, probe_video
 from .telemetry import read_gpu
+from .control import Cancelled, JobControl
 
 
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
@@ -54,6 +56,7 @@ class JobManager:
         self.jobs: dict[str, Job] = {}
         self.pending: queue.Queue[tuple[str, ProcessOptions]] = queue.Queue()
         self.lock = threading.RLock()
+        self.controls: dict[str, JobControl] = {}
         threading.Thread(target=self._worker, daemon=True).start()
 
     def add(self, paths: list[str], options: ProcessOptions) -> list[Job]:
@@ -66,13 +69,42 @@ class JobManager:
 
         added: list[Job] = []
         for path, metadata in resolved:
-            job_id = f"{int(time.time() * 1000):x}-{len(self.jobs):x}"
+            job_id = uuid.uuid4().hex[:16]
             job = Job(id=job_id, path=str(path), name=path.name, metadata=metadata)
             with self.lock:
                 self.jobs[job_id] = job
+                self.controls[job_id] = JobControl(options.resource_mode)
             self.pending.put((job_id, options))
             added.append(job)
         return added
+
+    def action(self, job_id: str, action: str) -> None:
+        if action not in {"pause", "resume", "cancel"}:
+            raise MediaError("不支持的任务操作。")
+        with self.lock:
+            targets = list(self.jobs.values()) if job_id == "all" else [self.jobs.get(job_id)]
+            if not targets or any(job is None for job in targets):
+                raise MediaError("任务不存在，请刷新页面。")
+            for job in targets:
+                if job.status in {"completed", "failed", "cancelled"}:
+                    continue
+                control = self.controls[job.id]
+                if action == "cancel":
+                    control.cancel_requested.set()
+                    job.status = "cancelling" if job.started_at else "cancelled"
+                    job.stage = "正在终止并清理临时文件" if job.started_at else "已取消排队"
+                    if not job.started_at:
+                        job.finished_at = time.time()
+                elif job.status != "cancelling":
+                    if action == "pause":
+                        control.pause_requested.set()
+                        job.status = "pausing" if job.started_at else "paused"
+                        job.stage = "当前小批次或步骤结束后暂停" if job.started_at else "已暂停排队"
+                    else:
+                        control.pause_requested.clear()
+                        job.status = "running" if job.started_at else "queued"
+                        job.stage = "继续处理" if job.started_at else "等待处理"
+                job.remaining_seconds = None
 
     def snapshot(self) -> list[dict[str, object]]:
         with self.lock:
@@ -83,26 +115,42 @@ class JobManager:
             job_id, options = self.pending.get()
             with self.lock:
                 job = self.jobs[job_id]
-                job.status = "running"
+                control = self.controls[job_id]
+                if control.cancel_requested.is_set():
+                    self.pending.task_done()
+                    continue
+                job.status = "paused" if control.pause_requested.is_set() else "running"
                 job.started_at = time.time()
 
             def update(payload: dict[str, object]) -> None:
                 with self.lock:
+                    control_state = payload.get("control_state")
+                    if control_state and job.status != "cancelling":
+                        job.status = str(control_state)
                     for key in ("stage", "progress", "remaining_seconds", "stage_fps"):
                         if key in payload:
+                            if key in {"stage", "remaining_seconds"} and job.status in {"pausing", "cancelling"}:
+                                continue
                             setattr(job, key, payload[key])
                     if "outputs" in payload:
                         job.outputs = dict(payload["outputs"])
 
             try:
-                report = process_video(job.path, options, update)
+                report = process_video(job.path, options, update, control=control)
                 with self.lock:
+                    control.check_cancel()
                     job.status = "completed"
                     job.stage = "处理完成"
                     job.progress = 1.0
                     job.remaining_seconds = 0
                     job.outputs = dict(report["outputs"])
                     job.report_path = str(report["report_path"])
+                    job.finished_at = time.time()
+            except Cancelled:
+                with self.lock:
+                    job.status = "cancelled"
+                    job.stage = "已终止，源视频未修改"
+                    job.remaining_seconds = None
                     job.finished_at = time.time()
             except Exception as error:
                 traceback.print_exc()
@@ -255,11 +303,18 @@ class Handler(BaseHTTPRequestHandler):
                     face_enhance=bool(body.get("face_enhance", False)),
                     face_fidelity=max(0.0, min(1.0, float(body.get("face_fidelity", 0.9)))),
                     duration_limit=float(body["duration_limit"]) if body.get("duration_limit") else None,
+                    resource_mode=str(body.get("resource_mode", "smooth")),
                 )
+                JobControl(options.resource_mode)
                 if options.face_enhance:
                     find_codeformer()
                 jobs = MANAGER.add([str(path) for path in paths], options)
                 self._json({"jobs": [job.public() for job in jobs]}, status=201)
+                return
+            if route == "/api/job-action":
+                body = self._body()
+                MANAGER.action(str(body.get("id", "")), str(body.get("action", "")))
+                self._json({"ok": True})
                 return
             if route == "/api/open-folder":
                 body = self._body()
@@ -270,7 +325,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
                 return
             if route == "/api/shutdown":
-                if any(job["status"] in {"running", "queued"} for job in MANAGER.snapshot()):
+                if any(job["status"] not in {"completed", "failed", "cancelled"} for job in MANAGER.snapshot()):
                     self._json({"error": "正在处理视频，不能停止服务。"}, status=409)
                     return
                 self._json({"ok": True})

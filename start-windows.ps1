@@ -66,7 +66,7 @@ function Get-PanelHealth {
 try {
   Get-PanelHealth | Out-Null
   $jobs = Invoke-RestMethod -UseBasicParsing -TimeoutSec 2 -Uri "$panelUrl/api/jobs"
-  if (@($jobs.jobs | Where-Object { $_.status -in @('running', 'queued') }).Count) {
+  if (@($jobs.jobs | Where-Object { $_.status -notin @('completed', 'failed', 'cancelled') }).Count) {
     Write-Host '正在处理视频，继续使用当前服务；空闲时重新打开可检查更新。'
     if (-not $NoOpen) { Start-Process $panelUrl }
     Stop-Transcript | Out-Null

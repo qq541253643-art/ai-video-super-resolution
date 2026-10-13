@@ -11,7 +11,8 @@ const el = Object.fromEntries([
   "activeRun", "activeName", "activePercent", "activeStage", "activeFps", "activeEta",
   "progressBar", "progressTrack", "completedSummary", "completedText", "gpuName", "realesrganState",
   "codeformerState", "footerStatus", "openFolderButton", "toastRegion",
-  "modelChip", "modelChipText",
+  "modelChip", "modelChipText", "resourceMode", "pauseButton", "cancelButton",
+  "cancelAllButton", "addVideosButton", "completedTitle", "runStateLabel",
 ].map(id => [id, document.getElementById(id)]));
 
 const api = async (url, options = {}) => {
@@ -47,7 +48,9 @@ const formatClock = seconds => {
   return `${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}（${formatDuration(seconds)}）`;
 };
 
-const stateLabel = status => ({ queued: "等待中", running: "处理中", completed: "已完成", failed: "失败" }[status] || "待开始");
+const stateLabel = status => ({ queued: "等待中", running: "处理中", completed: "已完成", failed: "失败",
+  pausing: "正在暂停", paused: "已暂停", waiting: "等待资源", cancelling: "正在终止", cancelled: "已取消" }[status] || "待开始");
+const activeStatuses = new Set(["running", "pausing", "paused", "waiting", "cancelling"]);
 
 const estimateSeconds = item => {
   const meta = item.metadata || {};
@@ -121,6 +124,7 @@ async function loadEnvironment() {
 
 async function pickFiles() {
   el.pickButton.disabled = true;
+  el.addVideosButton.disabled = true;
   el.footerStatus.textContent = "正在打开文件选择器…";
   try {
     const payload = await api("/api/pick", { method: "POST", body: "{}" });
@@ -131,6 +135,7 @@ async function pickFiles() {
     toast(error.message, "error");
   } finally {
     el.pickButton.disabled = false;
+    el.addVideosButton.disabled = false;
     el.footerStatus.textContent = "准备就绪";
   }
 }
@@ -142,7 +147,8 @@ async function startJobs() {
   try {
     const payload = await api("/api/jobs", {
       method: "POST",
-      body: JSON.stringify({ paths, tile: Number(el.tileSelect.value), face_enhance: el.faceToggle.checked }),
+      body: JSON.stringify({ paths, tile: Number(el.tileSelect.value), face_enhance: el.faceToggle.checked,
+        resource_mode: el.resourceMode.value }),
     });
     state.jobs.push(...payload.jobs);
     state.selected.clear();
@@ -158,12 +164,19 @@ async function pollJobs() {
   try {
     const payload = await api("/api/jobs");
     state.jobs = payload.jobs;
-    renderQueue([...state.jobs, ...[...state.selected.values()].map(item => ({ ...item, status: "selected" }))]);
-    const active = state.jobs.find(job => job.status === "running");
+    if (!state.jobs.length && !state.selected.size) renderSelected();
+    else renderQueue([...state.jobs, ...[...state.selected.values()].map(item => ({ ...item, status: "selected" }))]);
+    const active = state.jobs.find(job => activeStatuses.has(job.status));
     const completed = state.jobs.filter(job => job.status === "completed");
     const queued = state.jobs.filter(job => job.status === "queued");
     const failed = state.jobs.filter(job => job.status === "failed");
+    const cancelled = state.jobs.filter(job => job.status === "cancelled");
+    el.cancelAllButton.hidden = !active && !queued.length;
     if (active) {
+      el.runStateLabel.textContent = stateLabel(active.status);
+      el.pauseButton.textContent = ["paused", "pausing"].includes(active.status) ? "继续" : "暂停";
+      el.pauseButton.disabled = active.status === "cancelling";
+      el.cancelButton.disabled = active.status === "cancelling";
       el.introPanel.hidden = true;
       el.completedSummary.hidden = true;
       el.activeRun.hidden = false;
@@ -182,14 +195,23 @@ async function pollJobs() {
       const pendingSeconds = queued.reduce((sum, job) => sum + estimateSeconds(job), 0)
         + [...state.selected.values()].reduce((sum, item) => sum + estimateSeconds(item), 0);
       el.batchEta.textContent = formatClock(activeRemaining + pendingSeconds);
+      if (["paused", "pausing", "waiting", "cancelling"].includes(active.status)) {
+        el.activeEta.textContent = stateLabel(active.status);
+        el.batchEta.textContent = "恢复处理后重新估算";
+        el.activeFps.textContent = "—";
+      }
       el.footerStatus.textContent = `${active.stage} · ${percent}%`;
     } else if (state.jobs.length && !queued.length) {
       el.activeRun.hidden = true;
       el.introPanel.hidden = true;
       el.completedSummary.hidden = false;
-      el.completedText.textContent = failed.length ? `${completed.length} 个完成，${failed.length} 个失败` : `${completed.length} 个视频已保存到原文件夹`;
-      el.batchEta.textContent = failed.length ? "部分失败" : "全部完成";
-      el.footerStatus.textContent = failed.length ? "批次完成，但有失败项目" : "批次处理完成";
+      el.completedSummary.classList.toggle("has-errors", !!failed.length);
+      el.completedSummary.classList.toggle("was-cancelled", !!cancelled.length && !failed.length);
+      el.completedTitle.textContent = failed.length ? "批次已结束，有任务失败" : cancelled.length ? "批次已结束，有任务取消" : "本批次已完成";
+      el.completedSummary.querySelector("svg").toggleAttribute("hidden", !!failed.length || !!cancelled.length);
+      el.completedText.textContent = `${completed.length} 个完成，${failed.length} 个失败，${cancelled.length} 个取消`;
+      el.batchEta.textContent = failed.length ? "有失败项目" : cancelled.length ? "已结束" : "全部完成";
+      el.footerStatus.textContent = failed.length ? "请查看左侧失败原因；修复后可重新添加视频" : cancelled.length ? "已完成的输出保留，源视频未修改" : "批次处理完成";
       if (completed.length) {
         state.lastOutput = completed.at(-1).outputs.hd;
         el.openFolderButton.hidden = false;
@@ -202,6 +224,22 @@ async function pollJobs() {
 }
 
 el.pickButton.addEventListener("click", pickFiles);
+el.addVideosButton.addEventListener("click", pickFiles);
+async function controlJob(action, all = false) {
+  const active = state.jobs.find(job => activeStatuses.has(job.status));
+  if (!all && !active) return;
+  if (action === "cancel" && !window.confirm(all ? "终止当前视频并取消全部排队？已完成输出保留，源视频不变。" : "终止当前视频？已完成输出保留，源视频不变；其他排队视频仍会继续。")) return;
+  try {
+    await api("/api/job-action", { method: "POST", body: JSON.stringify({ id: all ? "all" : active.id, action }) });
+    await pollJobs();
+  } catch (error) { toast(error.message, "error"); }
+}
+el.pauseButton.addEventListener("click", () => {
+  const active = state.jobs.find(job => activeStatuses.has(job.status));
+  controlJob(active && ["paused", "pausing"].includes(active.status) ? "resume" : "pause");
+});
+el.cancelButton.addEventListener("click", () => controlJob("cancel"));
+el.cancelAllButton.addEventListener("click", () => controlJob("cancel", true));
 el.startButton.addEventListener("click", startJobs);
 el.clearButton.addEventListener("click", () => { state.selected.clear(); renderSelected(); });
 el.faceToggle.addEventListener("change", renderSelected);

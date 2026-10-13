@@ -25,6 +25,7 @@ FILES = [
     "ai_video_restore/__main__.py",
     "ai_video_restore/cli.py",
     "ai_video_restore/engine.py",
+    "ai_video_restore/control.py",
     "ai_video_restore/media.py",
     "ai_video_restore/server.py",
     "ai_video_restore/telemetry.py",

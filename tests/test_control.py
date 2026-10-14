@@ -18,9 +18,11 @@ class ControlTests(unittest.TestCase):
         job = control.JobControl()
         args, env, _ = job.prepare_command(["ffmpeg.exe", "-i", "input.mp4", "out.mp4"])
         self.assertIn("-filter_complex_threads", args)
-        self.assertLessEqual(int(env["OMP_NUM_THREADS"]), 4)
+        self.assertLessEqual(int(env["OMP_NUM_THREADS"]), 2)
         self.assertEqual(job.tile(512), 128)
+        self.assertEqual(job.chunk_size, 1)
         job = control.JobControl("full")
+        self.assertEqual(job.chunk_size, 16)
         self.assertEqual(job.tile(512), 512)
         self.assertEqual(job.prepare_command(["ffmpeg", "in", "out"])[0], ["ffmpeg", "in", "out"])
 
@@ -28,11 +30,111 @@ class ControlTests(unittest.TestCase):
         job = control.JobControl()
         events = []
         job.notify = events.append
-        with patch.object(control, "read_gpu", side_effect=[GpuSample(7000, 8192), GpuSample(2000, 8192)]), \
+        with patch.object(control, "read_gpu", side_effect=[GpuSample(7000, 8192), GpuSample(2000, 8192), GpuSample(2000, 8192)]), \
              patch.object(control, "available_memory_mb", return_value=4096), \
+             patch.object(job, "cpu_usage", return_value=0), \
              patch.object(job.cancel_requested, "wait"):
             job.checkpoint(gpu=True)
-        self.assertEqual([e["control_state"] for e in events], ["waiting", "running"])
+        self.assertEqual([e["control_state"] for e in events], ["waiting", "waiting", "running"])
+
+    def test_busy_gpu_waits_even_with_free_vram_and_requires_stable_idle(self):
+        job = control.JobControl()
+        events = []
+        job.notify = events.append
+        samples = [GpuSample(1000, 8192, value) for value in (90, 10, 50, 10, 10)]
+        with patch.object(control, "read_gpu", side_effect=samples), \
+             patch.object(control, "available_memory_mb", return_value=8192), \
+             patch.object(job, "cpu_usage", return_value=0), \
+             patch.object(job.cancel_requested, "wait") as wait:
+            job.checkpoint(gpu=True)
+        self.assertEqual(wait.call_count, 4)
+        self.assertIn("GPU", events[0]["stage"])
+        self.assertIsNone(events[0]["remaining_seconds"])
+        self.assertEqual(events[-1]["control_state"], "running")
+
+    def test_cpu_and_memory_pressure_gate_cpu_steps_without_gpu_query(self):
+        for cpu, memory, reason in (([80, 10, 10], [8192] * 3, "CPU"),
+                                    ([0] * 3, [3000, 8192, 8192], "内存")):
+            job = control.JobControl()
+            events = []
+            job.notify = events.append
+            with patch.object(control, "read_gpu") as gpu, \
+                 patch.object(control, "available_memory_mb", side_effect=memory), \
+                 patch.object(job, "cpu_usage", side_effect=cpu), \
+                 patch.object(job.cancel_requested, "wait"):
+                job.checkpoint(resources=True)
+            gpu.assert_not_called()
+            self.assertIn(reason, events[0]["stage"])
+            self.assertEqual(events[-1]["control_state"], "running")
+
+    def test_cpu_times_use_deltas_and_tolerate_missing_samples(self):
+        with patch.object(control, "system_cpu_times", side_effect=[(100, 200), (120, 300), None, (200, 500)]):
+            job = control.JobControl()
+            self.assertAlmostEqual(job.cpu_usage(), 80)
+            self.assertIsNone(job.cpu_usage())
+            self.assertIsNone(job.cpu_usage())
+
+    def test_full_mode_does_not_sample_or_rest(self):
+        job = control.JobControl("full")
+        with patch.object(control, "read_gpu") as gpu, patch.object(job, "cpu_usage") as cpu, \
+             patch.object(job.cancel_requested, "wait") as wait:
+            job.checkpoint(gpu=True, resources=True)
+            job.yield_after_batch(20)
+        gpu.assert_not_called()
+        cpu.assert_not_called()
+        wait.assert_not_called()
+
+    def test_missing_telemetry_does_not_block(self):
+        job = control.JobControl()
+        with patch.object(control, "read_gpu", return_value=GpuSample()), \
+             patch.object(control, "available_memory_mb", return_value=None), \
+             patch.object(job, "cpu_usage", return_value=None), \
+             patch.object(job.cancel_requested, "wait") as wait:
+            job.checkpoint(gpu=True)
+        wait.assert_not_called()
+
+    def test_rest_is_proportional_with_minimum_and_records_elapsed(self):
+        for elapsed, expected in ((0.1, 2), (4, 6)):
+            job = control.JobControl()
+            clock = [100.0]
+            events = []
+            job.notify = events.append
+            with patch.object(control.time, "monotonic", side_effect=lambda: clock[0]), \
+                 patch.object(job.cancel_requested, "wait", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+                job.yield_after_batch(elapsed)
+            self.assertEqual(job.yield_seconds, expected)
+            self.assertEqual(events[-1]["control_state"], "running")
+            self.assertIn("模型已退出", events[0]["stage"])
+
+    def test_cancel_during_pressure_or_rest_is_responsive(self):
+        for pressure in (True, False):
+            job = control.JobControl()
+            job.notify = lambda event: job.cancel_requested.set()
+            with patch.object(control, "read_gpu", return_value=GpuSample(7000, 8192)), \
+                 patch.object(control, "available_memory_mb", return_value=8192), \
+                 patch.object(job, "cpu_usage", return_value=0):
+                with self.assertRaises(control.Cancelled):
+                    job.checkpoint(gpu=True) if pressure else job.yield_after_batch(10)
+
+    def test_pause_during_rest_stays_paused_until_resume(self):
+        job = control.JobControl()
+        clock = [100.0]
+        events = []
+
+        def notify(event):
+            events.append(event)
+            if len(events) == 1:
+                job.pause_requested.set()
+            elif event["control_state"] == "paused" and clock[0] >= 104:
+                job.pause_requested.clear()
+
+        job.notify = notify
+        with patch.object(control.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(job.cancel_requested, "wait", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            job.yield_after_batch(0.1)
+        self.assertGreaterEqual(job.yield_seconds, 4)
+        self.assertIn("paused", [e["control_state"] for e in events])
+        self.assertEqual(events[-1]["control_state"], "running")
 
     def test_pause_and_cancel_while_waiting(self):
         job = control.JobControl()
@@ -86,10 +188,12 @@ class ControlTests(unittest.TestCase):
             job = control.JobControl()
             token = control.CURRENT.set(job)
             try:
-                with patch.object(job, "checkpoint"), patch.object(engine, "_execute_counted_stage", side_effect=stage):
+                with patch.object(job, "checkpoint"), patch.object(job, "yield_after_batch") as rest, \
+                     patch.object(engine, "_execute_counted_stage", side_effect=stage):
                     result = engine._run_counted_stage(["ncnn", "-i", str(inp), "-o", str(out), "-t", "128"],
                                                        out, 6, "test", 0, 1, lambda event: None)
-                self.assertEqual(calls, [128, 64, 64])
+                self.assertEqual(calls, [128] + [64] * 6)
+                self.assertEqual(rest.call_count, 6)
                 self.assertEqual(result.frames, 6)
                 self.assertEqual(sorted(x.name for x in out.iterdir()), sorted(x.name for x in inp.iterdir()))
             finally:

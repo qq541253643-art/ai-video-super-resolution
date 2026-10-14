@@ -13,7 +13,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="用 Real-ESRGAN 修复真人视频")
     parser.add_argument("inputs", nargs="+", type=Path, help="一个或多个视频路径")
     parser.add_argument("--tile", type=int, default=256, help="Real-ESRGAN tile 大小")
-    parser.add_argument("--resource-mode", choices=["smooth", "full"], default="smooth", help="smooth 流畅模式，full 全速模式")
+    parser.add_argument("--resource-mode", choices=["smooth", "full"], default="smooth", help="smooth 后台让行（默认），full 全速模式")
     parser.add_argument("--face", action="store_true", help="启用 CodeFormer 人脸增强")
     parser.add_argument("--face-only", action="store_true", help="复用已有高清版，仅追加 CodeFormer 人脸增强")
     parser.add_argument("--face-fidelity", type=float, default=0.9, help="CodeFormer 保真权重")

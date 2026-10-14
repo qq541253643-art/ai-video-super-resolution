@@ -196,7 +196,7 @@ def run_sr_stage(
 def _run(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     control = CURRENT.get()
     if control:
-        control.checkpoint()
+        control.checkpoint(resources=True)
         command, environment, flags = control.prepare_command(command)
     else:
         environment, flags = None, getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -253,10 +253,11 @@ def _run_counted_stage(
     started = time.perf_counter()
     monitor = GpuMonitor().start()
     completed = 0
-    chunk_size = 4 if control.mode == "smooth" else 16
+    chunk_size = control.chunk_size
     try:
         for start in range(0, len(files), chunk_size):
             control.checkpoint(gpu=True)
+            batch_started = time.monotonic()
             with tempfile.TemporaryDirectory(prefix="model-chunk-", dir=output_dir.parent) as scratch:
                 root = Path(scratch)
                 inputs, outputs = root / "input", root / "output"
@@ -302,8 +303,7 @@ def _run_counted_stage(
                 for source in batch:
                     (result_dir / source.name).replace(output_dir / source.name)
                 completed += len(batch)
-            if control.mode == "smooth":
-                control.cancel_requested.wait(0.15)
+            control.yield_after_batch(time.monotonic() - batch_started)
         control.checkpoint()
     finally:
         gpu = monitor.stop()
@@ -828,6 +828,8 @@ def _process_video(source: str | Path, options: ProcessOptions, callback: Progre
             "tile": options.tile,
             "effective_min_tile": control.min_tile if control else options.tile,
             "resource_mode": options.resource_mode,
+            "model_batch_frames": control.chunk_size,
+            "background_yield_seconds": round(control.yield_seconds, 3),
             "realesrgan_output_scale": model_scale,
             "realesrgan_backend": backend,
             "natural_ai_mix": 0.78,

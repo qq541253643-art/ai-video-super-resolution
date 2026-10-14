@@ -111,10 +111,10 @@
             <legend>显存设置</legend>
             <label class="field-label" for="resourceMode">运行模式（新提交的任务生效）</label>
             <select id="resourceMode">
-              <option value="smooth" selected>流畅模式 · 给日常使用留余量</option>
+              <option value="smooth" selected>后台让行 · 同时使用其他软件</option>
               <option value="full">全速模式 · 优先处理速度</option>
             </select>
-            <p class="field-help">流畅模式限制 CPU 线程和进程优先级，按小批次检查显存、内存；资源紧张时等待。不是固定资源预留，仍可能短时高负载。</p>
+            <p class="field-help">逐帧推理后退出模型并休息，GPU、CPU 或内存紧张时自动等待；处理会更慢。不是硬性占用上限，单帧处理时仍可能短时卡顿。</p>
             <label class="field-label" for="tileSelect">Tile 分块</label>
             <select id="tileSelect">
               <option value="128" selected>128 · 低显存占用</option>
@@ -122,7 +122,7 @@
               <option value="384">384</option>
               <option value="512">512 · 高显存占用</option>
             </select>
-            <p class="field-help">流畅模式最大使用 128；显存不足会减小分块重试。全速模式使用所选值。</p>
+            <p class="field-help">后台让行最大使用 128；显存不足会减小分块重试。全速模式使用所选值。</p>
           </fieldset>
 
           <fieldset class="setting-group output-rule">

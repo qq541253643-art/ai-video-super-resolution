@@ -58,7 +58,8 @@ const estimateSeconds = item => {
   const frames = Number(meta.duration) * Number(meta.fps);
   if (!Number.isFinite(megapixels) || !Number.isFinite(frames)) return 0;
   const faceSecondsPerFrame = el.faceToggle.checked ? 1.1 : 0;
-  return Math.max(30, frames * (megapixels * 8.0 + faceSecondsPerFrame));
+  const yieldFactor = el.resourceMode.value === "smooth" ? 2.5 : 1;
+  return Math.max(30, frames * (megapixels * 8.0 + faceSecondsPerFrame) * yieldFactor);
 };
 
 function renderSelected() {
@@ -244,6 +245,7 @@ el.startButton.addEventListener("click", startJobs);
 el.clearButton.addEventListener("click", () => { state.selected.clear(); renderSelected(); });
 el.faceToggle.addEventListener("change", renderSelected);
 el.tileSelect.addEventListener("change", renderSelected);
+el.resourceMode.addEventListener("change", renderSelected);
 el.openFolderButton.addEventListener("click", async () => {
   if (!state.lastOutput) return;
   try { await api("/api/open-folder", { method: "POST", body: JSON.stringify({ path: state.lastOutput }) }); }
